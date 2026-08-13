@@ -5,7 +5,10 @@
 # que no eran del hook — el hook deja pasar todo fuera de main, así que caían a
 # la vez los 22 casos de «BLOQUEA». Rojo falso, nunca verde falso, pero cuesta
 # un minuto averiguarlo.
-hook=~/.claude/hooks/git-no-main.sh
+# Por defecto el instalado, que es el que manda. Con HOOK=<ruta> se prueba otro:
+# hace falta para juzgar un cambio ANTES de instalarlo, que es cuando importa —
+# si no, se prueba el enlace de ~/.claude y se cree uno que ha probado su rama.
+hook=${HOOK:-~/.claude/hooks/git-no-main.sh}
 fallos=0
 
 probar() {           # probar <esperado: BLOQUEA|PASA> <comando>
@@ -18,6 +21,23 @@ probar() {           # probar <esperado: BLOQUEA|PASA> <comando>
     printf '  ok    %-7s %s\n' "$real" "$cmd"
   else
     printf '  FALLO esperaba %s y dio %s: %s\n' "$esperado" "$real" "$cmd"
+    fallos=$((fallos + 1))
+  fi
+}
+
+# Igual, pero desde OTRO directorio de trabajo. Hace falta para el `cd`: ese
+# agujero solo se ve cuando el cwd no es un repo en main, que es lo normal en
+# una sesión de verdad —el scratchpad, otro proyecto, un worktree en rama— y
+# justo por eso pasó desapercibido.
+probar_desde() {     # probar_desde <dir> <esperado: BLOQUEA|PASA> <comando>
+  dir=$1; esperado=$2; cmd=$3
+  salida=$(cd "$dir" && printf '{"tool_input":{"command":%s}}' "$(printf '%s' "$cmd" | jq -Rs .)" | bash "$hook" 2>/dev/null)
+  codigo=$?
+  if [ $codigo -eq 2 ]; then real=BLOQUEA; else real=PASA; fi
+  if [ "$real" = "$esperado" ]; then
+    printf '  ok    %-7s [desde %s] %s\n' "$real" "$(basename "$dir")" "$cmd"
+  else
+    printf '  FALLO esperaba %s y dio %s [desde %s]: %s\n' "$esperado" "$real" "$(basename "$dir")" "$cmd"
     fallos=$((fallos + 1))
   fi
 }
@@ -95,6 +115,35 @@ probar BLOQUEA "git -C $TMP_MAIN merge --ff-only una-rama"
 probar PASA    "git -C $TMP_RAMA commit -m algo"
 probar PASA    "git -C $TMP_RAMA push -u origin la-rama"
 probar PASA    "git -C $TMP_MAIN push origin --delete la-rama-de-la-pr"
+
+echo "--- 'cd <repo> && git …' apunta tan fuerte como '-C' ---"
+mkdir -p "$TMP/sin-repo"
+probar_desde "$TMP/sin-repo" BLOQUEA "cd $TMP_MAIN && git commit -m algo"
+probar_desde "$TMP/sin-repo" BLOQUEA "cd $TMP_MAIN && git push origin main"
+probar_desde "$TMP/sin-repo" BLOQUEA "cd $TMP_MAIN; git commit -m algo"
+probar_desde "$TMP/sin-repo" BLOQUEA "cd \"$TMP_MAIN\" && git commit -m algo"
+probar_desde "$TMP_RAMA"     BLOQUEA "cd $TMP_MAIN && git commit -m algo"
+probar_desde "$TMP"          BLOQUEA "cd en-main && git commit -m algo"
+probar_desde "$TMP/sin-repo" PASA    "cd $TMP_RAMA && git commit -m algo"
+# `-C` es lo que obedece git de verdad, así que gana al `cd`.
+probar_desde "$TMP/sin-repo" BLOQUEA "cd $TMP_RAMA && git -C $TMP_MAIN commit -m algo"
+probar_desde "$TMP/sin-repo" PASA    "cd $TMP_MAIN && git -C $TMP_RAMA commit -m algo"
+# Un `cd` que no lleva a ningún sitio no absuelve: se vuelve a juzgar el cwd.
+probar_desde "$TMP_MAIN"     BLOQUEA "cd /no-existe-de-verdad && git commit -m algo"
+# Y la limpieza de después de fusionar sigue pasando con un `cd` delante: un `cd`
+# no cambia lo que git hace, y es como se escribe desde fuera del repo.
+probar_desde "$TMP/sin-repo" PASA    "cd $TMP_MAIN && git push origin --delete la-rama-de-la-pr"
+probar_desde "$TMP/sin-repo" PASA    "cd $TMP_MAIN && git pull --ff-only"
+probar_desde "$TMP/sin-repo" PASA    "cd $TMP_MAIN; git push origin -d la-rama-de-la-pr"
+# Pero el `cd` no abre la puerta a encadenar detrás, que es de lo que protege.
+probar_desde "$TMP/sin-repo" BLOQUEA "cd $TMP_MAIN && git push origin --delete r && git push origin main"
+
+echo "--- ...pero un 'cd' NOMBRADO no es un 'cd' DADO ---"
+# La misma familia que el agujero de `--ff-only` y que el del heredoc: si el `cd`
+# escrito dentro del mensaje contara, sería el mensaje el que elige qué repo se
+# juzga.
+probar_desde "$TMP_RAMA" PASA    "git commit -m \"vengo de hacer cd $TMP_MAIN\""
+probar_desde "$TMP_MAIN" BLOQUEA "git commit -m \"vengo de hacer cd $TMP_RAMA\""
 
 echo "--- lo que nunca le interesó ---"
 probar PASA 'git merge-base main otra-rama'

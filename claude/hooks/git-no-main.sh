@@ -53,9 +53,15 @@ printf '%s' "$orden" | grep -qE '(^|[;&|(]|[[:space:]])git[[:space:]]+(-C[[:spac
 # colar encadenando (`git push origin main && git push origin --delete x`).
 norm=$(printf '%s' "$orden" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
 
+# Y sin un `cd <ruta> &&` delante, que no cambia lo que git hace y es como se
+# escribe la limpieza desde un directorio que no es el repo. Solo si va el
+# PRIMERO y solo una vez: lo que venga detrás del git sigue contando, que es lo
+# que impide colar `cd x && git push origin --delete r && git push origin main`.
+sin_cd=$(printf '%s' "$norm" | sed -E 's#^cd ("[^"]*"|[^ ]+) *(&&|;) *##')
+
 # Y sin el `-C <ruta>`, para que las excepciones valgan igual desde dentro del
 # repo que desde fuera. A qué repo apunta se resuelve abajo, por separado.
-sin_c=$(printf '%s' "$norm" | sed -E 's#^git -C [^ ]+ #git #')
+sin_c=$(printf '%s' "$sin_cd" | sed -E 's#^git -C [^ ]+ #git #')
 
 # Y sin la tubería final ni el `2>&1`: `… --delete rama | tail -2` es como
 # escribe todo el mundo, y ni la tubería ni la redirección cambian lo que git
@@ -121,10 +127,55 @@ case "$cmd" in *CLAUDE_ALLOW_MAIN=1*) exit 0 ;; esac
 # Limitación conocida: con varias órdenes encadenadas se juzga la primera. Las
 # dos excepciones de arriba ya exigen orden única, así que lo encadenado acaba
 # bloqueado igual.
-destino=.
+# Y `cd <ruta> && git …` apunta tan fuerte como `-C`. Hasta el 2026-08-13 esta
+# forma NO se miraba, y era un agujero de verdad: con el directorio de trabajo
+# fuera de un repo en main —el scratchpad, otro proyecto, un worktree en rama—
+# un `cd <repo-en-main> && git commit` pasaba entero. Medido:
+#
+#     rc=0 PASA     cd /Users/cmo/Projects/welzy && git commit -m x
+#     rc=2 BLOQUEA  git -C /Users/cmo/Projects/welzy commit -m x
+#
+# El hook hermano (git-una-sesion-por-checkout.sh) ya parseaba el `cd`; este, que
+# es el que de verdad para los commits sobre main, no. Es la explicación más
+# plausible de `f78d799`, un `wip:` commiteado directamente sobre el main de
+# welzy el 13-08-2026 a las 09:35.
+#
+# El `cd` solo cuenta si aparece ANTES de la orden de git. Si no, un mensaje que
+# lo mencione —`git commit -m "cd /otro-repo"`— elegiría el repo a juzgar, que es
+# exactamente la familia del agujero de `--ff-only`: prosa que nombra una orden
+# no es esa orden.
+cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
+[ -n "$cwd" ] || cwd=$PWD
+destino=$cwd
+
+# Dónde empieza la orden de git, para mirar solo lo que va delante. awk casa por
+# la izquierda, que es justo lo que hace falta y lo que `sed` con `.*` no da.
+corte=$(printf '%s' "$norm" | awk '{
+  if (match($0, /(^|[;&|[:space:]])git[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?(-[^[:space:]]+[[:space:]]+)*(commit|merge|push)([[:space:]]|$)/))
+    print RSTART - 1
+  else
+    print 0
+}')
+delante=${norm:0:corte}
+
+# `-C` manda sobre el `cd`, que es lo que hace git.
+apuntada=""
 if [[ $norm =~ (^|[[:space:]])git[[:space:]]+-C[[:space:]]+([^[:space:]]+) ]]; then
-  destino="${BASH_REMATCH[2]}"
+  apuntada="${BASH_REMATCH[2]}"
+elif [[ $delante =~ (^|[;&|[:space:]])cd[[:space:]]+([^[:space:]\;\&\|]+) ]]; then
+  apuntada="${BASH_REMATCH[2]}"
 fi
+
+apuntada=${apuntada#\"}; apuntada=${apuntada%\"}
+apuntada=${apuntada#\'}; apuntada=${apuntada%\'}
+case "$apuntada" in
+  ("") ;;
+  ("~"/*) destino="${HOME}/${apuntada#\~/}" ;;
+  (/*)    destino="$apuntada" ;;
+  (*)     destino="${cwd}/${apuntada}" ;;
+esac
+# Una ruta que no existe no puede absolver: se vuelve al cwd, nunca a «nada».
+[ -d "$destino" ] || destino="$cwd"
 
 # Fuera de un repo git no hay nada que proteger.
 branch=$(git -C "$destino" rev-parse --abbrev-ref HEAD 2>/dev/null) || exit 0
