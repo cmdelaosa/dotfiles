@@ -1,0 +1,89 @@
+{
+  "model": "opus",
+  "outputStyle": "concise",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/cmo/.claude/hooks/git-no-main.sh"
+          },
+          {
+            "type": "command",
+            "command": "/Users/cmo/.claude/hooks/git-una-sesion-por-checkout.sh"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/cmo/.claude/hooks/git-una-sesion-por-checkout.sh --aviso"
+          },
+          {
+            "type": "command",
+            "command": "/Users/cmo/.claude/hooks/dotfiles-al-dia.sh"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "terminal-notifier -title 'Claude Code' -message 'Needs your input'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "terminal-notifier -title 'Claude Code' -message 'Task finished'"
+          }
+        ]
+      }
+    ]
+  },
+  "effortLevel": "high",
+  "autoUpdatesChannel": "latest",
+  "skipDangerousModePermissionPrompt": true,
+  "skipWorkflowUsageWarning": true,
+  "skipAutoPermissionPrompt": true,
+  "enabledPlugins": {
+    "frontend-design@claude-plugins-official": false
+  },
+  "permissions": {
+    "allow": [
+      "Bash(docker:*)",
+      "Bash(echo:*)",
+      "Bash(find /Users/cmo/.claude/plugins -type f -name *.json)",
+      "Bash(find /Users/cmo/Projects -maxdepth 2 -type f -name *.md)",
+      "Bash(git:*)",
+      "Bash(java:*)",
+      "Bash(kotlinc:*)",
+      "Bash(nvm --version)",
+      "Bash(ruby --version)",
+      "Bash(sw_vers)",
+      "Bash(xcode-select -p)",
+      "Bash(xcrun --version)",
+      "Bash(xcrun simctl:*)",
+      "WebSearch",
+      "WebFetch",
+      "mcp__Claude_Browser__navigate",
+      "mcp__Claude_Browser__read_page",
+      "mcp__Claude_Browser__get_page_text",
+      "mcp__Claude_Browser__find",
+      "mcp__Claude_Browser__read_console_messages",
+      "mcp__Claude_Browser__read_network_requests"
+    ],
+    "defaultMode": "auto"
+  }
+}
