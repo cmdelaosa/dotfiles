@@ -87,8 +87,17 @@ case $accion in
     case " $* " in
       *" --json completedAt "*)
         case "${ESCENARIO:-verde}" in
-          *-viejo) echo "2020-01-01T00:00:00Z" ;;   # main se movió DESPUÉS del verde
-          *)       echo "2999-01-01T00:00:00Z" ;;   # el verde es más nuevo que main
+          # main se mueve y NO para: el guión tiene que rendirse, no fusionar.
+          *-terco) echo "2020-01-01T00:00:00Z" ;;
+          # main se movió después del verde, pero al meterlo en la rama el CI
+          # nuevo ya es posterior. Sin esto no habría forma de salir del bucle.
+          *-viejo)
+            if grep -q update-branch "$ESTADO/gh.log" 2>/dev/null; then
+              echo "2999-01-01T00:00:00Z"
+            else
+              echo "2020-01-01T00:00:00Z"
+            fi ;;
+          *) echo "2999-01-01T00:00:00Z" ;;   # el verde es más nuevo que main
         esac
         exit 0 ;;
     esac
@@ -125,12 +134,28 @@ export GH="$TMP/bin/gh"
 # Docker de mentira: no levanta nada, pero apunta todo lo que le piden. Las
 # comprobaciones de la pila se hacen sobre ese registro, no sobre contenedores
 # de verdad — la matriz no puede depender de que haya un Docker vivo.
+#
+# Qué volúmenes existen lo dice VOLUMENES (nombres separados por comas). Hasta el
+# 13-08-2026 respondía que no existía ninguno, pase lo que pase, y con eso el
+# clonado del volumen —el `volume create` y el `cp -a` que copian tus datos— no
+# lo ejercitaba ni el docker falso: siempre se caía por la rama de «no hay nada
+# que clonar».
 cat > "$TMP/bin/docker" <<'FALSO'
 #!/bin/bash
 set -u
-printf '%s\n' "$*" >> "$ESTADO/docker.log"
+# El puerto no va en los argumentos sino delante, en el entorno, así que se
+# apunta aparte o no habría forma de comprobar cuál se eligió.
+if [ -n "${WEB_BIND_PORT:-}" ]; then
+  printf 'WEB_BIND_PORT=%s %s\n' "$WEB_BIND_PORT" "$*" >> "$ESTADO/docker.log"
+else
+  printf '%s\n' "$*" >> "$ESTADO/docker.log"
+fi
 case "$1 ${2:-}" in
-  "volume inspect") exit 1 ;;                 # ningún volumen existe todavía
+  "volume inspect")
+    case ",${VOLUMENES:-}," in
+      *",$3,"*) exit 0 ;;
+      *)        exit 1 ;;
+    esac ;;
 esac
 case "$*" in
   *"ps -aq") echo "contenedor-de-mentira" ;;  # para que el `down` llegue a correr
@@ -147,9 +172,35 @@ FALSO
 chmod +x "$TMP/bin/avisador"
 export AVISADOR="$TMP/bin/avisador"
 
+# curl y nc de mentira. RESPONDE dice si la pila contesta; PUERTOS_PILLADOS,
+# cuántos puertos seguidos se dan por ocupados antes de encontrar uno libre.
+cat > "$TMP/bin/curl" <<'FALSO'
+#!/bin/bash
+printf '%s\n' "$*" >> "$ESTADO/curl.log"
+[ "${RESPONDE:-0}" = 1 ]
+FALSO
+chmod +x "$TMP/bin/curl"
+export CURL="$TMP/bin/curl"
+
+cat > "$TMP/bin/nc" <<'FALSO'
+#!/bin/bash
+# `nc -z host puerto` sale 0 si hay alguien escuchando. Se finge que los
+# primeros PUERTOS_PILLADOS lo están, para probar que se busca el siguiente.
+n=$(cat "$ESTADO/nc.cuenta" 2>/dev/null || echo 0)
+if [ "$n" -lt "${PUERTOS_PILLADOS:-0}" ]; then
+  printf '%s' "$((n + 1))" > "$ESTADO/nc.cuenta"
+  exit 0
+fi
+exit 1
+FALSO
+chmod +x "$TMP/bin/nc"
+export NC="$TMP/bin/nc"
+
 cat > "$TMP/bin/desplegar.sh" <<'FALSO'
 #!/bin/bash
 printf '%s\n' "$*" >> "$ESTADO/despliegues.log"
+[ "${DESPLIEGUE_FALLA:-0}" = 1 ] && exit 1
+exit 0
 FALSO
 chmod +x "$TMP/bin/desplegar.sh"
 export DESPLEGAR="$TMP/bin/desplegar.sh"
@@ -200,16 +251,31 @@ cerrar() {
   # se comería el minuto de gracia de verdad en cada pasada.
   ( cd "$d/repo" &&
       ESTADO="$d/estado" ESPEJO="$d/espejo" ESCENARIO="$esc" ESPERA_CHECKS=0 \
+      DESPLIEGUE_FALLA="${DESPLIEGUE_FALLA:-0}" \
       "$bin/cerrar-rama.sh" "$@" )
 }
 
 # Un CI de mentira, para separar «aquí no hay CI» de «aquí hay CI y esta PR no
 # dispara nada», que es lo que hace el `paths-ignore` de welzy con las PRs de
 # solo documentación.
-con_workflow() { # con_workflow <dir>
+#
+# La forma del `on:` es un argumento porque YAML admite cuatro y hasta el
+# 13-08-2026 solo se reconocía la de mapa. Escribir el workflow siempre igual es
+# lo que dejó pasar el fallo: `prespuestos-obras` usa la de lista y su repositorio
+# entero se leía como «sin CI».
+escribir_workflow() {   # escribir_workflow <fichero> [forma]
+  case "${2:-mapa}" in
+    mapa)      printf 'name: CI\non:\n  pull_request:\njobs:\n  x:\n    runs-on: ubuntu-latest\n' ;;
+    lista)     printf 'name: CI\non: [push, pull_request]\njobs:\n  x:\n    runs-on: ubuntu-latest\n' ;;
+    escalar)   printf 'name: CI\non: pull_request\njobs:\n  x:\n    runs-on: ubuntu-latest\n' ;;
+    secuencia) printf 'name: CI\non:\n  - push\n  - pull_request\njobs:\n  x:\n    runs-on: ubuntu-latest\n' ;;
+    solo-push) printf 'name: CI\non:\n  push:\n    branches: [main]\njobs:\n  x:\n    runs-on: ubuntu-latest\n' ;;
+  esac > "$1"
+}
+
+con_workflow() { # con_workflow <dir> [forma]
   mkdir -p "$1/repo/.github/workflows"
-  printf 'name: CI\non:\n  pull_request:\njobs:\n  x:\n    runs-on: ubuntu-latest\n' \
-    > "$1/repo/.github/workflows/ci.yml"
+  escribir_workflow "$1/repo/.github/workflows/ci.yml" "${2:-mapa}"
   git -C "$1/repo" add -A
   git -C "$1/repo" commit -qm "ci: workflow de mentira"
   git -C "$1/repo" push -q origin main
@@ -219,7 +285,16 @@ probar_rama() {  # probar_rama <escenario> <dir> [args…]
   local esc=$1 d=$2; shift 2
   ( cd "$d/repo" &&
       ESTADO="$d/estado" ESPEJO="$d/espejo" ESCENARIO="$esc" ESPERA_CHECKS=0 ESPERA_PILA=1 \
+      VOLUMENES="${VOLUMENES:-}" RESPONDE="${RESPONDE:-0}" \
+      PUERTOS_PILLADOS="${PUERTOS_PILLADOS:-0}" \
       "$bin/probar-rama.sh" "$@" )
+}
+
+# El puerto que le toca a una rama, calculado igual que puerto_de_rama pero
+# aquí fuera: si se leyera del propio guión, la prueba diría que sí a cualquier
+# cosa que hiciera.
+puerto_esperado() { # puerto_esperado <rama>
+  printf '%s' "$(( 8100 + $(printf '%s' "$1" | cksum | awk '{print $1}') % 400 ))"
 }
 
 # Un repositorio que se despliega: el contrato de cmdlo son estas dos cosas.
@@ -352,6 +427,39 @@ afirmar "y nombra el paths-ignore como causa probable" contiene "paths-ignore" "
 afirmar "tampoco fusiona"                              hay_rama "$d" con-ci-sin-checks
 afirmar "ni borra el worktree"                         hay_worktree "$d" con-ci-sin-checks
 
+caso "cerrar-rama.sh: las cuatro formas de escribir 'on:' son CI igual"
+# YAML admite las cuatro y hasta el 13-08-2026 solo se veía la de mapa. La de
+# lista es la de `prespuestos-obras`, que además no tiene otro workflow: su
+# repositorio entero se leía como «sin CI» teniéndolo.
+for forma in mapa lista escalar secuencia; do
+  d=$(montar); con_workflow "$d" "$forma"
+  ruta=$(abrir "$d" "forma-$forma" 2>/dev/null); trabajar "$ruta" uno
+  msg=$(cerrar sin-checks "$d" "forma-$forma" 2>&1)
+  afirmar "on: en forma de $forma se reconoce como CI" \
+          no_contiene "este repositorio no tiene CI" "$msg"
+done
+
+# Y lo contrario: un workflow que NO se dispara con PRs no es CI de PR.
+d=$(montar); con_workflow "$d" solo-push
+ruta=$(abrir "$d" solo-con-push 2>/dev/null); trabajar "$ruta" uno
+msg=$(cerrar sin-checks "$d" solo-con-push 2>&1)
+afirmar "un workflow de solo push no cuenta como CI de PR" \
+        contiene "este repositorio no tiene CI" "$msg"
+
+caso "cerrar-rama.sh: el CI que mira es el de LA RAMA"
+# Una rama que AÑADE el CI es justo el caso en que la raíz todavía no lo tiene.
+# Mirando la raíz, esa rama se juzgaba como «aquí no hay CI» — y el repositorio
+# donde eso pasa es precisamente el que acaba de ganar sus pruebas.
+d=$(montar)
+ruta=$(abrir "$d" trae-el-ci 2>/dev/null)
+mkdir -p "$ruta/.github/workflows"
+escribir_workflow "$ruta/.github/workflows/ci.yml" mapa
+git -C "$ruta" add -A
+git -C "$ruta" commit -qm "ci: lo trae la rama"
+msg=$(cerrar sin-checks "$d" trae-el-ci 2>&1)
+afirmar "el workflow que solo está en la rama cuenta" \
+        no_contiene "este repositorio no tiene CI" "$msg"
+
 caso "cerrar-rama.sh: verde de punta a punta"
 d=$(montar); ruta=$(abrir "$d" verde 2>/dev/null); trabajar "$ruta" uno
 afirmar "cierra sin error"              cerrar verde "$d" verde
@@ -385,6 +493,20 @@ d2=$(montar); ruta2=$(abrir "$d2" sin-fusionar 2>/dev/null); trabajar "$ruta2" u
 negar   "se niega a limpiar una rama que no está en origin/main" \
         cerrar verde "$d2" sin-fusionar --solo-limpiar
 afirmar "y no ha borrado nada"          hay_rama "$d2" sin-fusionar
+
+# Y el camino feliz, que es para lo que existe la opción: la PR se fusionó por
+# otro lado —a mano en GitHub, o porque el repositorio no tenía CI— y aquí solo
+# queda recoger.
+d=$(montar); ruta=$(abrir "$d" fusionada-fuera 2>/dev/null); trabajar "$ruta" uno
+git -C "$d/repo" push -q -u origin fusionada-fuera
+git -C "$d/espejo" fetch -q origin
+git -C "$d/espejo" merge -q --no-ff origin/fusionada-fuera -m "fusionada por otro camino"
+git -C "$d/espejo" push -q origin main
+afirmar "--solo-limpiar recoge una rama ya fusionada" \
+        cerrar verde "$d" fusionada-fuera --solo-limpiar
+negar   "no queda worktree"             hay_worktree "$d" fusionada-fuera
+negar   "no queda rama local"           hay_rama "$d" fusionada-fuera
+negar   "no queda rama remota"          hay_remota "$d" fusionada-fuera
 
 caso "cerrar-rama.sh: lo que no tiene sentido"
 d=$(montar)
@@ -502,6 +624,108 @@ afirmar "y lo que escribe es el HEAD de la rama" \
 negar   "la marca no se cuela en el repositorio" \
         test -n "$(git -C "$ruta" status --porcelain)"
 
+caso "probar-rama.sh: los datos de la rama son una COPIA de los tuyos"
+# Lo único de todo esto que puede destruir datos. Hasta el 13-08-2026 el docker
+# falso decía que no existía ningún volumen, así que este camino —el que copia—
+# no lo recorría ni la matriz.
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" clona-el-volumen 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" clona-el-volumen >/dev/null 2>&1
+VOLUMENES="repo_postgres-data"; RESPONDE=1
+afirmar "con la pila arriba, sale bien"     probar_rama verde "$d" clona-el-volumen
+log=$(registro "$d" docker.log)
+afirmar "crea el volumen de LA RAMA" \
+        contiene "volume create repo-clona-el-volumen_postgres-data" "$log"
+afirmar "y copia dentro los datos de tu volumen de siempre" \
+        contiene "run --rm -v repo_postgres-data:/de -v repo-clona-el-volumen_postgres-data:/a" "$log"
+afirmar "tu volumen nunca se escribe: solo se lee" \
+        no_contiene "volume create repo_postgres-data" "$log"
+VOLUMENES=""; RESPONDE=0
+
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" ya-tenia-datos 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" ya-tenia-datos >/dev/null 2>&1
+VOLUMENES="repo_postgres-data,repo-ya-tenia-datos_postgres-data"; RESPONDE=1
+afirmar "si la rama ya tenía datos, sale bien"  probar_rama verde "$d" ya-tenia-datos
+log=$(registro "$d" docker.log)
+afirmar "…y no los pisa: ni crea"           no_contiene "volume create" "$log"
+afirmar "…ni vuelve a copiar"               no_contiene "run --rm" "$log"
+VOLUMENES=""; RESPONDE=0
+
+caso "probar-rama.sh: cuando la pila responde, avisa y da la URL"
+# El único caso que se podía escribir sin falsear curl era el de que NO
+# respondiera, así que el final feliz —la URL, el aviso del sistema, el mensaje
+# con las instrucciones— no lo comprobaba nadie.
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" pila-viva 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" pila-viva >/dev/null 2>&1
+RESPONDE=1
+msg=$(probar_rama verde "$d" pila-viva 2>&1) && vivo=0 || vivo=1
+afirmar "sale bien"                          test "$vivo" = 0
+afirmar "dice dónde probarlo"                contiene "Lista para probar:  http://127.0.0.1:" "$msg"
+afirmar "recuerda que los datos son una copia" contiene "tu pila de siempre no se ha tocado" "$msg"
+afirmar "y remite a cerrar-rama.sh, no cierra él" contiene "cerrar-rama.sh pila-viva" "$msg"
+avisos=$(registro "$d" avisos.log)
+afirmar "avisa por el sistema con la URL"    contiene "Lista para probar en http://127.0.0.1:" "$avisos"
+afirmar "y el aviso nombra repo y rama"      contiene "repo · pila-viva" "$avisos"
+afirmar "la rama sigue sin fusionar"         hay_rama "$d" pila-viva
+RESPONDE=0
+
+caso "probar-rama.sh: el .env de la raíz se enlaza, no se copia"
+# No está versionado —y no debe estarlo—, así que un worktree recién abierto no
+# lo tiene y la pila arrancaría sin ninguna clave. Una copia se queda vieja el
+# día que cambie el de la raíz.
+d=$(montar); con_workflow "$d"; con_compose "$d"
+printf 'CLAVE=secreta\n' > "$d/repo/.env"
+ruta=$(abrir "$d" con-env 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" con-env >/dev/null 2>&1
+RESPONDE=1
+probar_rama verde "$d" con-env >/dev/null 2>&1
+afirmar "el worktree acaba teniendo su .env"  test -L "$ruta/.env"
+afirmar "y es un enlace al de la raíz"        test "$(readlink "$ruta/.env")" = "$d/repo/.env"
+RESPONDE=0
+
+caso "probar-rama.sh: el puerto sale del nombre de la rama"
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" puerto-propio 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" puerto-propio >/dev/null 2>&1
+RESPONDE=1
+probar_rama verde "$d" puerto-propio >/dev/null 2>&1
+afirmar "usa el puerto que le toca a esta rama" \
+        contiene "WEB_BIND_PORT=$(puerto_esperado puerto-propio) " "$(registro "$d" docker.log)"
+RESPONDE=0
+
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" puerto-pillado 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" puerto-pillado >/dev/null 2>&1
+RESPONDE=1; PUERTOS_PILLADOS=3
+probar_rama verde "$d" puerto-pillado >/dev/null 2>&1
+afirmar "si está ocupado, se corre al siguiente libre" \
+        contiene "WEB_BIND_PORT=$(( $(puerto_esperado puerto-pillado) + 3 )) " "$(registro "$d" docker.log)"
+RESPONDE=0; PUERTOS_PILLADOS=0
+
+caso "probar-rama.sh: --sin-ci, --sin-pila y el árbol sucio"
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" sin-esperar 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" sin-esperar >/dev/null 2>&1
+RESPONDE=1
+afirmar "--sin-ci levanta la pila con el CI en rojo" probar_rama rojo "$d" sin-esperar --sin-ci
+afirmar "…y la levanta de verdad"           contiene "up -d --build" "$(registro "$d" docker.log)"
+RESPONDE=0
+
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" solo-la-pr 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" solo-la-pr >/dev/null 2>&1
+afirmar "--sin-pila abre la PR y para"      probar_rama verde "$d" solo-la-pr --sin-pila
+afirmar "y no levanta nada"                 test -z "$(registro "$d" docker.log)"
+
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" sucia-al-probar 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" sucia-al-probar >/dev/null 2>&1
+printf 'a medias\n' > "$ruta/a-medias.txt"
+negar   "para con cambios sin guardar"      probar_rama verde "$d" sucia-al-probar
+afirmar "--forzar sigue adelante"           probar_rama verde "$d" sucia-al-probar --forzar
+
 caso "cerrar-rama.sh: producción"
 d=$(montar); con_workflow "$d"; con_contrato_de_despliegue "$d"
 ruta=$(abrir "$d" con-despliegue 2>/dev/null); trabajar "$ruta" uno
@@ -517,6 +741,19 @@ d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" sin-contrato 2>/dev/null); tra
 afirmar "sin contrato de despliegue, cierra" cerrar verde "$d" sin-contrato
 afirmar "y no intenta desplegar"             test -z "$(registro "$d" despliegues.log)"
 
+# Un despliegue roto no puede pasar desapercibido: la PR YA está fusionada y
+# producción se ha quedado con lo de antes. Es el único estado a medias de todo
+# esto, y hasta el 13-08-2026 el desplegar.sh falso siempre salía bien.
+d=$(montar); con_workflow "$d"; con_contrato_de_despliegue "$d"
+ruta=$(abrir "$d" despliegue-roto 2>/dev/null); trabajar "$ruta" uno
+DESPLIEGUE_FALLA=1
+msg=$(cerrar verde "$d" despliegue-roto 2>&1) && cerrado=0 || cerrado=1
+DESPLIEGUE_FALLA=0
+afirmar "con el despliegue roto, cierra igual"  test "$cerrado" = 0
+afirmar "pero lo dice con todas las letras"     contiene "el despliegue ha fallado" "$msg"
+afirmar "y avisa de que la PR sí está fusionada" contiene "La PR SÍ está fusionada" "$msg"
+negar   "y limpia igual, que la fusión sí ocurrió" hay_worktree "$d" despliegue-roto
+
 caso "cerrar-rama.sh: un verde viejo no vale"
 # El CI prueba la FUSIÓN con main, no la rama. Si main se movió después, ese
 # verde probó otra cosa — y GitHub la sigue marcando en verde igual.
@@ -525,9 +762,23 @@ afirmar "cierra"                        cerrar verde-viejo "$d" verde-caducado
 afirmar "pero antes metió main en la rama y volvió a esperar" \
         contiene "update-branch" "$(registro "$d" gh.log)"
 
+afirmar "y solo una vez, no en bucle" \
+        test "$(grep -c update-branch "$d/estado/gh.log" 2>/dev/null || echo 0)" = 1
+
 d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" verde-al-dia 2>/dev/null); trabajar "$ruta" uno
 afirmar "con el verde al día, cierra igual" cerrar verde "$d" verde-al-dia
 afirmar "y NO toca la rama sin necesidad"   no_contiene "update-branch" "$(registro "$d" gh.log)"
+
+# Y si main no para quieto, se pregunta otra vez en vez de fusionar a ciegas —
+# pero no para siempre: con un tope, y diciéndolo. Hasta el 13-08-2026 esto era
+# un solo tiro y la segunda espera se fusionaba sin volver a comprobar nada.
+d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" main-que-no-para 2>/dev/null); trabajar "$ruta" uno
+msg=$(cerrar verde-terco "$d" main-que-no-para 2>&1) && terco=0 || terco=1
+afirmar "si main no para quieto, NO fusiona"   test "$terco" = 1
+afirmar "y dice por qué"                       contiene "se ha movido" "$msg"
+afirmar "lo intentó más de una vez"            test "$(grep -c update-branch "$d/estado/gh.log")" -gt 1
+afirmar "sin borrar el worktree"               hay_worktree "$d" main-que-no-para
+afirmar "ni la rama"                           hay_rama "$d" main-que-no-para
 
 caso "cerrar-rama.sh: se lleva la pila de la rama, con sus volúmenes"
 d=$(montar); con_workflow "$d"; con_compose "$d"

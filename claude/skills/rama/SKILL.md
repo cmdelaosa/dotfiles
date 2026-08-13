@@ -23,6 +23,30 @@ Dice qué hay dentro, en minúsculas y con guiones: `retenciones-como-gasto`,
 inventa el harness (`sleepy-pare-10a9f6`) — el script lo rechaza, porque con
 cuatro worktrees abiertos no hay forma de saber cuál tiene qué sin entrar.
 
+## Si la sesión ya nació dentro de un worktree
+
+Pasa a menudo: la app abre la sesión en `.claude/worktrees/<nombre-inventado>`,
+en la rama `claude/<nombre-inventado>`. Es el mismo directorio que usa
+`abrir-rama.sh` con el único nombre que rechaza, solo que nadie llegó a
+preguntárselo. **Múdate antes de tocar el primer fichero**, en este orden y con
+cada orden de git suelta:
+
+```bash
+~/.claude/bin/abrir-rama.sh <nombre-de-la-rama>
+```
+
+`EnterWorktree` con la ruta que imprime, y luego:
+
+```bash
+git -C <repo> worktree remove .claude/worktrees/<nombre-inventado>
+```
+
+```bash
+git -C <repo> branch -D claude/<nombre-inventado>
+```
+
+No se pierde nada: esa rama está en el commit de `main` y sin nada encima.
+
 ## Si se niega
 
 - **«la rama ya existe»** → esa tarea ya está empezada. Mira

@@ -5,10 +5,14 @@
 # que no eran del hook — el hook deja pasar todo fuera de main, así que caían a
 # la vez los 22 casos de «BLOQUEA». Rojo falso, nunca verde falso, pero cuesta
 # un minuto averiguarlo.
-# Por defecto el instalado, que es el que manda. Con HOOK=<ruta> se prueba otro:
-# hace falta para juzgar un cambio ANTES de instalarlo, que es cuando importa —
-# si no, se prueba el enlace de ~/.claude y se cree uno que ha probado su rama.
-hook=${HOOK:-~/.claude/hooks/git-no-main.sh}
+# Por defecto el hook de AL LADO, no el instalado. Hasta el 13-08-2026 era al
+# revés (`~/.claude/hooks/git-no-main.sh`) y eso daba un verde falso justo en el
+# caso normal: se toca el hook en un worktree, pero ~/.claude/hooks es un enlace
+# a la RAÍZ del repositorio, así que la matriz probaba la versión de main y no la
+# que se acababa de escribir. Con HOOK=<ruta> se prueba otro — el instalado, por
+# ejemplo, para confirmar que la máquina tiene lo que se cree que tiene.
+aqui=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+hook=${HOOK:-$aqui/git-no-main.sh}
 fallos=0
 
 probar() {           # probar <esperado: BLOQUEA|PASA> <comando>

@@ -54,11 +54,15 @@ fi
 titulo "matriz de abrir/probar/cerrar-rama.sh"
 "$repo/claude/bin/probar-ramas.sh" || fallos=$((fallos + 1))
 
-# Con HOOK=, para juzgar el hook de ESTA rama y no el que hay instalado en
-# ~/.claude: sin eso se prueba el enlace y uno se cree que ha probado su cambio.
+# Las dos matrices de hooks ya prueban por defecto la copia de al lado, así que
+# aquí no hace falta HOOK=: lanzando la de este worktree se juzga el hook de esta
+# rama, que es lo que se está cambiando. HOOK= sigue sirviendo para la otra
+# pregunta —«¿tiene la máquina lo que creo?»—, que no es la de un push.
 titulo "matriz del hook git-no-main.sh"
-HOOK="$repo/claude/hooks/git-no-main.sh" \
-  "$repo/claude/hooks/probar-git-no-main.sh" || fallos=$((fallos + 1))
+"$repo/claude/hooks/probar-git-no-main.sh" || fallos=$((fallos + 1))
+
+titulo "matriz del hook git-una-sesion-por-checkout.sh"
+"$repo/claude/hooks/probar-git-una-sesion.sh" || fallos=$((fallos + 1))
 
 echo
 if [ "$fallos" -eq 0 ]; then

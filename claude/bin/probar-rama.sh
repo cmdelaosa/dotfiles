@@ -120,7 +120,7 @@ paso "levanto $proyecto en el puerto $puerto"
 url="http://127.0.0.1:$puerto"
 paso "espero a que $url responda"
 intentos=0
-until curl -fsS -o /dev/null "$url" 2>/dev/null; do
+until $CURL -fsS -o /dev/null "$url" 2>/dev/null; do
   intentos=$((intentos + 1))
   if [ "$intentos" -ge "${ESPERA_PILA:-60}" ]; then
     aviso "" "La pila no responde en $url después de $intentos intentos." \
