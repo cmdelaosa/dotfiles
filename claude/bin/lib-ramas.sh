@@ -7,10 +7,15 @@
 # borrar el directorio desde el que corren, frenar con el árbol sucio— y dos
 # copias de eso se separan en cuanto alguien arregla una sola.
 
-# Para poder falsear GitHub, Docker y el avisador en la matriz de pruebas.
+# Para poder falsear el mundo de fuera en la matriz de pruebas. `curl` y `nc`
+# están aquí por lo mismo que los demás: sin poder falsearlos, el camino en que
+# la pila SÍ responde —el aviso, la URL, el mensaje final— no lo probaba nadie,
+# porque el único caso que se podía escribir era el de que no respondiera.
 GH="${GH:-gh}"
 DOCKER="${DOCKER:-docker}"
 AVISADOR="${AVISADOR:-terminal-notifier}"
+CURL="${CURL:-curl}"
+NC="${NC:-nc}"
 
 morir() { printf '%s\n' "$@" >&2; exit 1; }
 aviso() { printf '%s\n' "$@" >&2; }
@@ -107,6 +112,23 @@ empujar_y_abrir_pr() {
 }
 
 # ── El CI ───────────────────────────────────────────────────────────────────
+# ¿Hay algún workflow que se dispare con las PRs? YAML deja escribir el `on:` de
+# cuatro maneras y hasta el 13-08-2026 esto solo reconocía una, la de mapa. Con
+# `on: [push, pull_request]` —la de `prespuestos-obras`, que además es su único
+# workflow— decía «este repositorio no tiene CI» teniéndolo, y eso convierte un
+# repositorio con pruebas en uno que se fusiona a ojo.
+#
+# Se mira el árbol de la RAMA, no el de la raíz: una rama que AÑADE el CI es
+# justo el caso en que la raíz todavía no lo tiene.
+hay_ci_de_pr() {                        # hay_ci_de_pr <directorio>
+  grep -qE \
+    -e '^[[:space:]]*pull_request(_target)?[[:space:]]*:' \
+    -e '^[[:space:]]*on[[:space:]]*:[[:space:]]*\[[^]]*pull_request' \
+    -e '^[[:space:]]*on[[:space:]]*:[[:space:]]*pull_request(_target)?[[:space:]]*$' \
+    -e '^[[:space:]]*-[[:space:]]*pull_request(_target)?[[:space:]]*$' \
+    "$1"/.github/workflows/*.y*ml 2>/dev/null
+}
+
 # Sale 0 si está verde, 1 si está rojo, 2 si no hay checks. Imprime el porqué.
 esperar_ci() {                          # esperar_ci [--vigilar]
   local vigilar=0 salida hay_workflows espera malos corriendo
@@ -131,7 +153,7 @@ esperar_ci() {                          # esperar_ci [--vigilar]
   #    dos daban el mismo mensaje —«este repositorio no tiene CI»—, que en welzy
   #    es falso: tiene `ci.yml`, y lo que pasa es que su `paths-ignore` deja
   #    fuera las PRs de solo markdown a propósito.
-  if grep -qE '^[[:space:]]*pull_request(_target)?[[:space:]]*:' "$raiz"/.github/workflows/*.y*ml 2>/dev/null; then
+  if hay_ci_de_pr "${ruta_wt:-$raiz}"; then
     hay_workflows=1
   else
     hay_workflows=0
@@ -252,7 +274,7 @@ puerto_de_rama() {                      # puerto_de_rama → imprime el puerto
   local semilla p n=0
   semilla=$(printf '%s' "$rama" | cksum | awk '{print $1}')
   p=$(( 8100 + semilla % 400 ))
-  while nc -z 127.0.0.1 "$p" >/dev/null 2>&1; do
+  while $NC -z 127.0.0.1 "$p" >/dev/null 2>&1; do
     p=$(( p + 1 )); n=$(( n + 1 ))
     [ "$n" -gt 100 ] && morir "No encuentro un puerto libre entre 8100 y 8600."
   done

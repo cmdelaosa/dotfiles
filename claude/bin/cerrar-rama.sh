@@ -76,9 +76,32 @@ if [ "$solo_limpiar" != 1 ]; then
       juzgar_ci
 
       # Un verde viejo no vale: si main se ha movido, ese CI probó otra fusión.
-      # Se mete main en la rama, y el CI nuevo se juzga igual que el primero.
-      fresco=0; asegurar_ci_fresco || fresco=$?
-      [ "$fresco" = 10 ] && juzgar_ci
+      # Se mete main en la rama, se vuelve a juzgar el CI, y se vuelve a
+      # PREGUNTAR — porque main puede haberse movido otra vez mientras se
+      # esperaba, y con varias ramas en vuelo eso deja de ser hipotético: es el
+      # escenario para el que se montó todo esto. Hasta el 13-08-2026 era un
+      # solo tiro, y la segunda espera se fusionaba a ciegas.
+      #
+      # El tope existe porque preguntar en bucle también tapa una carrera que
+      # aquí no se puede cerrar: justo después del `update-branch`, GitHub puede
+      # tardar en listar la ejecución nueva y `--watch` sale al instante sobre la
+      # vieja. Si eso pasa, la vuelta siguiente vuelve a ver un verde caducado y
+      # se vuelve a esperar. Si ni así converge, lo que toca es decirlo y no
+      # fusionar: un `main` que no para quieto es una decisión de Carlos, no del
+      # guión.
+      vueltas=0
+      while :; do
+        fresco=0; asegurar_ci_fresco || fresco=$?
+        [ "$fresco" = 10 ] || break
+        vueltas=$((vueltas + 1))
+        if [ "$vueltas" -gt "${VUELTAS_CI:-3}" ]; then
+          morir "" \
+            "$principal se ha movido $vueltas veces mientras esperaba a su CI." \
+            "No fusiono con un verde que probó otra fusión. No he borrado nada:" \
+            "vuelve a lanzarme cuando $principal se esté quieto."
+        fi
+        juzgar_ci
+      done
 
       paso "verde: fusiono la PR #$numero"
       $GH pr merge "$numero" --merge >&2 ||

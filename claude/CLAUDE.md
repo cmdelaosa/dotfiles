@@ -37,13 +37,17 @@ now does, and I'm the one who has to use it and try it.
 - **Work never happens on `main`.** Every change — in any repo — starts with `~/.claude/bin/abrir-rama.sh <name-that-says-what-is-inside>`, which opens the branch *and* its worktree and prints the path to enter with `EnterWorktree`. Not a courtesy: on 2026-08-13 three sessions landed in welzy's root at once, one moved HEAD under another, a WIP ended up inside someone else's PR (`5b727d2`, now in main's history) and a `commit` went straight onto `main`. Nobody chose to skip the worktree; opening one was a manual step, and manual steps get skipped. **Do this before touching the first file**, not after the first edit.
 - **Merging happens through a pull request, not locally.** Open it with `gh pr create`. The PR is where CI runs; a change that hasn't been judged by CI doesn't get merged.
 - **Closing has two halves, and the second one is mine to trigger.** First `~/.claude/bin/probar-rama.sh <branch>`: it pushes, opens the PR, waits for CI and — only on green — brings up that branch's own local stack (its own Compose project, its own port, a *copy* of my data volume) and notifies me. It **never merges**. Run it in the background; welzy's CI takes ~12 minutes. Then I look at it. If something needs changing, change it in the branch and run it again — that is the point: `main` gets one clean merge instead of three commits fixing what testing revealed.
-- **Only when I say so**, `~/.claude/bin/cerrar-rama.sh <branch>`, from the repo root after `ExitWorktree` with `action: "keep"`. It re-checks green, merges, deploys to production with `cmdlo-infra/desplegar.sh`, tears down the branch's stack with its volumes, and removes worktree, local branch and remote branch — in that order, which is the only one that works. **Never `gh pr merge --delete-branch`**: it merges on GitHub and then fails locally when a worktree holds the branch or holds `main`, leaving the branch alive and saying nothing.
+- **Only when I say so**, `~/.claude/bin/cerrar-rama.sh <branch>`, from the repo root after `ExitWorktree` with `action: "keep"`. It re-checks green, merges, deploys to production, tears down the branch's stack with its volumes, and removes worktree, local branch and remote branch — in that order, which is the only one that works. **Never `gh pr merge --delete-branch`**: it merges on GitHub and then fails locally when a worktree holds the branch or holds `main`, leaving the branch alive and saying nothing.
+- **The production step is conditional — don't announce a deploy that isn't going to happen.** `cerrar-rama.sh` only calls `cmdlo-infra/desplegar.sh` when the repo carries the cmdlo contract: `ops/deploy/deploy.sh` **and** `.github/workflows/release.yml`. Today that is welzy and nothing else; everywhere else it says so and skips the step.
 - **A green that predates the current `main` is not a green.** CI tests the *result of merging* the branch with `main` as it was then; if `main` moved afterwards, GitHub keeps showing green for a merge nobody tested. `cerrar-rama.sh` compares when the checks finished against when `origin/<main>` last moved and, if `main` won, merges `main` into the branch and waits for the new run. This only bites with several branches in flight — which is exactly what the worktree flow makes easy.
 - Never `git commit`, `git merge` or `git push` while on `main`. A `PreToolUse` hook (`~/.claude/hooks/git-no-main.sh`) blocks all three and is the real enforcement: GitHub branch protection needs Pro or a public repo, and these repos are private on the free plan, so nothing server-side stops a direct push.
+- **There is a second `PreToolUse` hook, and it blocks more verbs**: `~/.claude/hooks/git-una-sesion-por-checkout.sh` refuses `add`, `am`, `apply`, `checkout`, `cherry-pick`, `clean`, `commit`, `merge`, `mv`, `pull`, `rebase`, `reset`, `restore`, `revert`, `rm`, `stash` and `switch` when another live Claude session shares the same git root. Reading (`status`, `diff`, `log`, `worktree`) always passes. The remedy it prints is the worktree, so this only fires when the worktree rule was skipped. Its hatch is `CLAUDE_ALLOW_SHARED_CHECKOUT=1`, and it is mine to authorise too.
+- **Neither hook sees inside the branch scripts.** A `PreToolUse` hook only reads the Bash line, so the `git push origin --delete`, `git branch -D` and `git pull --ff-only` that `cerrar-rama.sh` runs internally never reach it. The hooks protect what gets typed by hand; the scripts are trusted because they have a test matrix.
 - **Cleaning up after a merge is not "touching main", and the hook lets it through — no hatch needed** *(2026-08-13)*: `git pull --ff-only`, `git push origin --delete <branch>`, `git branch -D <branch>`, `git worktree remove <path>`. Two conditions: the branch must not be `main`/`master`, and **each command runs on its own**, because the hook matches the whole command line — chaining with `&&`, `;` or `||` throws the exception away. A trailing pipe is fine (`| tail -2`) as long as `git` isn't named after it, and so is a **leading** `cd <path> &&`: it doesn't change what git does, and it is how the cleanup gets written from a directory that isn't the repo. That `cd` also decides *which* repo the hook judges — same as `git -C`, which wins when both appear. Asking for the hatch to delete an already-merged branch was spending it on the one thing that doesn't matter, and a hatch requested daily stops being read.
 - The hook has an escape hatch, `CLAUDE_ALLOW_MAIN=1`. **Don't reach for it on your own** — if touching `main` directly looks necessary, say why and let me decide. It exists for real writes to `main`, not for the cleanup above.
-- **Both the hook and the branch scripts have their own test matrix**: `~/.claude/hooks/probar-git-no-main.sh` and `~/.claude/bin/probar-ramas.sh`. Run the one you touched, and prove the tests can fail by reintroducing the bug in a copy. That is how the `--ff-only` hole was found: the old exception matched that substring *anywhere* in the command, so even `git commit -m "fix the --ff-only thing"` sailed straight through.
-- If a repo has no CI yet, say so when opening the PR rather than treating "no checks" as a pass. `cerrar-rama.sh` enforces this: with no checks it leaves the PR open and refuses to merge.
+- **There are three test matrices, one per moving part**: `probar-git-no-main.sh` and `probar-git-una-sesion.sh` next to their hooks, and `probar-ramas.sh` next to the branch scripts. Run the one you touched, and prove the tests can fail by reintroducing the bug in a copy. That is how the `--ff-only` hole was found: the old exception matched that substring *anywhere* in the command, so even `git commit -m "fix the --ff-only thing"` sailed straight through.
+- **Run the matrix that sits next to the file you edited, not `~/.claude/…`.** All three default to the copy beside them, which in a worktree is the one you just changed; `~/.claude/hooks` and `~/.claude/bin` are symlinks to the repo *root*, i.e. to `main`. Until 2026-08-13 the hook matrix defaulted the other way and reported green for a file it had never read. `HOOK=<path>` still points it at the installed copy when what you want to check is the machine.
+- **"No checks" has two causes and they are not the same.** The repo may have no PR CI at all, or it may have CI that this PR doesn't trigger — welzy's `paths-ignore` does exactly that with documentation-only PRs. `cerrar-rama.sh` tells them apart and refuses to merge either way; say which one it was when reporting. Note that `dotfiles` itself has no CI, so closing a branch there always stops at that point and leaves the PR for me.
 
 ## Worktrees — named after their branch, with a `wt` prefix
 
@@ -53,9 +57,24 @@ now does, and I'm the one who has to use it and try it.
   (`focused-pascal-b3d58d`, `frosty-lamport-0953ed`): with four of those open at
   once there's no way to know which holds what without opening each one.
 - **Don't build the name by hand** — `abrir-rama.sh` derives it from the branch,
-  and refuses the harness's pattern outright. If a session was born with a random
-  one, **rename the branch first and say so**: a worktree whose name no longer
-  matches its branch is worse than a random one.
+  and refuses the harness's pattern outright.
+- **When the session is *born* inside one of those, move out before touching
+  anything** *(2026-08-13)*. It happens often: the app opens the session already
+  in `.claude/worktrees/<invented-name>` on branch `claude/<invented-name>` —
+  the same directory `abrir-rama.sh` uses, with the one name it rejects, except
+  it never gets asked because branch and directory already exist. The recipe,
+  in this order and with each git command on its own (the hook lets all three
+  through):
+
+      ~/.claude/bin/abrir-rama.sh <name-that-says-what-is-inside>
+      EnterWorktree with the path it prints
+      git -C <repo> worktree remove .claude/worktrees/<invented-name>
+      git -C <repo> branch -D claude/<invented-name>
+
+  Nothing is lost: that branch sits on the same commit as `main` with no work on
+  top. What the old instruction said — «rename the branch first» — can't be done:
+  renaming leaves the directory with the old name, which is worse than a random
+  one, and the directory can't be moved from inside the session that lives in it.
 - **Don't leave worktrees behind.** `cerrar-rama.sh` removes the worktree in the
   same breath as deleting the branch, and that is the point of it existing. The
   default state of a repo is **one worktree on `main`**, at the repo root.
