@@ -1,2 +1,66 @@
 # dotfiles
-Configuración de la máquina: hoy, ~/.claude (hooks, skills, ajustes)
+
+La configuración de la máquina que hasta ahora solo existía en un sitio: dentro de
+`~/.claude`, sin historia, sin revisión y sin nada que avisara si cambiaba. Hoy son
+enlaces simbólicos a este repositorio, así que cualquier cambio es un diff.
+
+El empujón fue el 13-08-2026: la única barrera que impide que dos sesiones de Claude
+se pisen en un mismo checkout es un hook que vivía aquí dentro, en un directorio que
+nadie versionaba. Una barrera que se puede apagar sin dejar rastro no es una barrera.
+
+```bash
+git clone https://github.com/cmdelaosa/dotfiles.git ~/Projects/dotfiles
+~/Projects/dotfiles/instalar.sh
+```
+
+`instalar.sh` es idempotente y **no pisa nada**: lo que encuentre como fichero de
+verdad lo aparta con fecha antes de enlazar. `comprobar.sh` dice si `~/.claude`
+sigue viniendo de aquí.
+
+## Qué hay dentro
+
+| | |
+|---|---|
+| `claude/CLAUDE.md` | Las instrucciones globales: cómo informar, ramas y PR, worktrees, planificación |
+| `claude/settings.json` | Modelo, estilo de salida, permisos y **los hooks** |
+| `claude/hooks/git-no-main.sh` | Rechaza `commit`/`merge`/`push` estando en `main`. La protección de rama de GitHub pide plan de pago y estos repositorios son privados en el gratuito: esto es lo único que hay |
+| `claude/hooks/git-una-sesion-por-checkout.sh` | Rechaza los verbos que mueven árbol o índice cuando hay otra sesión viva en la misma raíz de git, y lo avisa al arrancar |
+| `claude/hooks/dotfiles-al-dia.sh` | Avisa si la máquina y este repositorio han dejado de coincidir |
+| `claude/skills/` | `despliega`, `grill-me`, `new-project` |
+| `claude/output-styles/concise.md` | El estilo que referencia `settings.json`; sin él, la referencia queda coja |
+| `claude/templates/project/` | El esqueleto que usa el skill `new-project` |
+
+## Qué se queda fuera, a propósito
+
+`~/.claude` es sobre todo estado, no configuración, y casi todo es privado:
+
+- **`projects/`**: 1,5 GB de transcripciones de conversaciones, más los ficheros de
+  memoria. Ni cabe ni debe salir de la máquina.
+- **`plugins/`, `cache/`, `sessions/`, `session-env/`, `shell-snapshots/`,
+  `telemetry/`, `history.jsonl`, `tasks/`, `plans/`, `scheduled-tasks/`,
+  `backups/`, `stats-cache.json`**: estado que la app regenera.
+- Nada con credenciales: las de Claude viven en el llavero de macOS y las de `gh` en
+  su propio llavero. **Si algún día aparece un fichero con un token dentro de
+  `~/.claude`, no lo enlaces aquí.**
+
+## La trampa
+
+`settings.json` **lo reescribe la propia app** cuando cambias de modelo, de estilo de
+salida o de plugins. Si esa escritura borra y crea el fichero en vez de escribir
+encima, se lleva el enlace por delante: la máquina sigue funcionando, el repositorio
+se queda con una copia vieja, y no hay ningún diff que lo cuente — que es justo el
+problema que este repositorio venía a resolver.
+
+Por eso `comprobar.sh` no mira el contenido: mira que **siga siendo un enlace**. Y por
+eso lo llama un hook de `SessionStart`, para que la respuesta llegue sin que nadie
+tenga que acordarse de preguntar.
+
+## Al tocar un hook
+
+- Un hook `PreToolUse` que sale con **2 bloquea la herramienta**, y bash sale con 2
+  ante un error de sintaxis: una errata aquí bloquea todo git. **`/bin/bash -n` antes
+  de commitear**, y con `/bin/bash` (el 3.2 de Apple), no con el de Homebrew: el 3.2
+  no cierra bien un `case` dentro de `$( )` sin paréntesis de apertura en el patrón, y
+  el 5.x lo acepta sin rechistar.
+- Los cambios en `settings.json` y en los hooks **no valen para las sesiones ya
+  abiertas**: se leen al arrancar. Basta con abrir una pestaña nueva.

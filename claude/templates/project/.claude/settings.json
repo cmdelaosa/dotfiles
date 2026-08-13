@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "model": "{{MODEL}}",
+  "effortLevel": "{{EFFORT}}",
+  "permissions": {
+    "defaultMode": "plan",
+    "allow": [
+      "Bash({{VERIFY_CMD}})",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{FORMAT_HOOK_CMD}}"
+          }
+        ]
+      }
+    ]
+  }
+}
