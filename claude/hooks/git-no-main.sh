@@ -19,14 +19,39 @@ input=$(cat)
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null)
 [ -z "$cmd" ] && exit 0
 
+# Los cuerpos de heredoc son TEXTO, no órdenes: un `gh pr create` cuyo cuerpo
+# MENCIONA un empujón a main no empuja nada. Hasta el 2026-08-13 el hook leía la
+# línea entera como una cadena y bloqueaba justo eso — la misma familia que el
+# agujero de `--ff-only`, que casaba dentro de un mensaje de commit.
+#
+# La línea que ABRE el heredoc sí se conserva (ahí está la orden de verdad); se
+# tira lo de dentro, hasta la marca de cierre.
+#
+# Precio conocido y aceptado: un `bash <<EOF` con git dentro deja de verse. Hay
+# que escribirlo a propósito, y el falso positivo se pagaba a diario. Las comillas
+# se escriben en octal (\047 \042) para no pelearse con el entrecomillado de awk.
+orden=$(printf '%s\n' "$cmd" | awk '
+  {
+    if (dentro) { if ($0 ~ marca) dentro = 0; next }
+    if (match($0, /<<-?[ \t]*[\047\042]?[A-Za-z_][A-Za-z0-9_]*[\047\042]?/)) {
+      m = substr($0, RSTART, RLENGTH)
+      sub(/^<<-?[ \t]*/, "", m)
+      gsub(/[\047\042]/, "", m)
+      marca = "^[ \t]*" m "[ \t]*$"
+      dentro = 1
+    }
+    print
+  }
+')
+
 # Solo las tres órdenes que mueven la rama. El subcomando tiene que terminar ahí:
 # `git merge-base` es de solo lectura y con `*"git merge"*` lo bloqueaba también.
-printf '%s' "$cmd" | grep -qE '(^|[;&|(]|[[:space:]])git[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?(-[^[:space:]]+[[:space:]]+)*(commit|merge|push)([[:space:]]|$)' || exit 0
+printf '%s' "$orden" | grep -qE '(^|[;&|(]|[[:space:]])git[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?(-[^[:space:]]+[[:space:]]+)*(commit|merge|push)([[:space:]]|$)' || exit 0
 
 # Espacios normalizados: las excepciones de abajo se comparan con la orden
 # ENTERA, así que no pueden pelearse con el formato — pero tampoco se dejan
 # colar encadenando (`git push origin main && git push origin --delete x`).
-norm=$(printf '%s' "$cmd" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
+norm=$(printf '%s' "$orden" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
 
 # Y sin el `-C <ruta>`, para que las excepciones valgan igual desde dentro del
 # repo que desde fuera. A qué repo apunta se resuelve abajo, por separado.

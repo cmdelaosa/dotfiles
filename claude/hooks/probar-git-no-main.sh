@@ -68,6 +68,14 @@ probar PASA 'git push origin --delete la-rama-de-la-pr'
 probar PASA 'git push origin -d fuera-los-atajos-que-ya-no-se-usan'
 probar PASA 'git push upstream --delete rama/con-barra'
 
+echo "--- el heredoc es TEXTO: mencionar una orden no es darla ---"
+probar PASA    $'gh pr create --body "$(cat <<\'EOF\'\ngit push origin main\nEOF\n)"'
+probar PASA    $'gh pr create --title x --body "$(cat <<\'EOF\'\nAntes hacíamos git merge otra-rama\ny también git commit -m algo\nEOF\n)"'
+# ...pero la línea que ABRE el heredoc sí es una orden, y lo de después también.
+probar BLOQUEA $'git commit -F - <<\'MSG\'\nun mensaje cualquiera\nMSG'
+probar BLOQUEA $'cat <<\'EOF\' > f\ntexto\nEOF\ngit push origin main'
+probar BLOQUEA $'gh pr create --body "$(cat <<\'EOF\'\ntexto\nEOF\n)" && git push origin main'
+
 echo "--- '-C': manda la rama del repo APUNTADO, no la del cwd ---"
 probar BLOQUEA "git -C $TMP_MAIN commit -m algo"
 probar BLOQUEA "git -C $TMP_MAIN push origin main"
