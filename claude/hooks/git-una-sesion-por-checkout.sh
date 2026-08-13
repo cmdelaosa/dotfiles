@@ -69,7 +69,28 @@ if [ "$modo" != "--aviso" ]; then
   case "$cmd" in *CLAUDE_ALLOW_SHARED_CHECKOUT=1*) exit 0 ;; esac
 fi
 
-mi_raiz=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || exit 0
+# El comando puede trabajar en otro sitio que el cwd de la sesión: `git -C <dir> …` o
+# `cd <dir> && git …`. Y eso no es un caso raro, es lo normal desde que existe la
+# norma de worktrees: una sesión arrancada en el checkout principal se muda a
+# `.claude/worktrees/wt<rama>` y su cwd sigue siendo el de siempre. Sin mirar a dónde
+# apunta el comando de verdad, dos sesiones cada una en SU worktree se juzgarían las
+# dos contra el checkout principal y se bloquearían sin motivo — el falso positivo
+# que hay que evitar por encima de todo. Medido el 13-08-2026 con dos sesiones así.
+destino="$cwd"
+if [ "$modo" != "--aviso" ]; then
+  d=$(printf '%s' "$cmd" | sed -n 's/.*git[[:space:]]\{1,\}-C[[:space:]]\{1,\}\([^[:space:]]\{1,\}\).*/\1/p' | head -1)
+  [ -z "$d" ] && d=$(printf '%s' "$cmd" | sed -n 's/^[[:space:]]*cd[[:space:]]\{1,\}\([^;&|]\{1,\}\).*/\1/p' | head -1)
+  d=$(printf '%s' "$d" | sed 's/[[:space:]]*$//; s/^"//; s/"$//; s/^'\''//; s/'\''$//')
+  case "$d" in
+    ("") ;;
+    ("~"/*) destino="${HOME}/${d#\~/}" ;;
+    (/*) destino="$d" ;;
+    (*) destino="${cwd}/${d}" ;;
+  esac
+  [ -d "$destino" ] || destino="$cwd"
+fi
+
+mi_raiz=$(git -C "$destino" rev-parse --show-toplevel 2>/dev/null) || exit 0
 [ -z "$mi_raiz" ] && exit 0
 
 # ── Quién más está vivo aquí ────────────────────────────────────────────────────
@@ -152,7 +173,8 @@ EOF
 
 [ -z "$otra_pid" ] && exit 0
 
-rama=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
+# La rama del checkout del que hablamos, que es el del comando y no el de la sesión.
+rama=$(git -C "$mi_raiz" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
 
 if [ "$modo" = "--aviso" ]; then
   cat <<EOF
