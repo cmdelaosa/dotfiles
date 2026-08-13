@@ -193,6 +193,49 @@ esperar_ci() {                          # esperar_ci [--vigilar]
   return 0
 }
 
+# ── ¿Ese verde probó el main de AHORA? ──────────────────────────────────────
+# `ci.yml` no prueba la rama: prueba el resultado de FUSIONARLA con main en ese
+# momento. Si main se mueve después, la PR sigue marcada en verde y ese verde ya
+# no dice nada de lo que se va a fusionar. Medido el 13-08-2026: fusionada la PR
+# #8, la #9 seguía reportando `CLEAN`.
+#
+# `ci.yml` deja escrita la suposición que lo hacía tolerable —«con un solo
+# mantenedor fusionando de una en una no ocurre»— y esa suposición se cae en
+# cuanto hay varios agentes con una rama cada uno, que es justo para lo que se
+# montó todo esto.
+#
+# Sale 0 si el verde sigue valiendo, y 10 si ha tenido que meter main en la rama:
+# entonces hay un CI nuevo y hay que volver a esperarlo.
+epoch_iso() {                           # epoch_iso <2026-08-13T14:47:12Z>
+  local t=${1%%.*}
+  date -j -u -f '%Y-%m-%dT%H:%M:%S' "${t%Z}" +%s 2>/dev/null ||
+    date -u -d "$1" +%s 2>/dev/null || true
+}
+
+asegurar_ci_fresco() {
+  local ultimo main_epoch check_epoch
+  ultimo=$($GH pr checks "$rama" --json completedAt --jq '[.[].completedAt] | max' 2>/dev/null || true)
+  [ -n "$ultimo" ] && [ "$ultimo" != null ] || return 0
+
+  git -C "$raiz" fetch origin --quiet
+  main_epoch=$(git -C "$raiz" log -1 --format=%ct "origin/$principal" 2>/dev/null || true)
+  check_epoch=$(epoch_iso "$ultimo")
+  # Sin poder comparar no se inventa una respuesta: se deja pasar el verde que hay.
+  [ -n "$main_epoch" ] && [ -n "$check_epoch" ] || return 0
+  [ "$main_epoch" -gt "$check_epoch" ] || return 0
+
+  aviso "" \
+    "origin/$principal se ha movido desde que el CI de esta PR pasó:" \
+    "ese verde probó otra fusión, no la que se haría ahora."
+  paso "meto $principal en la rama y espero al CI nuevo"
+  # Con merge y no con `--rebase` a propósito: el rebase reescribe los SHA de la
+  # rama, y entonces el freno del borrado —«¿está esta rama dentro de
+  # origin/main?»— diría que no y se negaría a limpiar.
+  $GH pr update-branch "$numero" >&2 ||
+    morir "" "No he podido meter $principal en la rama (¿conflicto?). No fusiono nada."
+  return 10
+}
+
 # ── La pila local de una rama ───────────────────────────────────────────────
 # Un proyecto de Compose por rama, para que dos ramas levantadas a la vez no se
 # pisen y para que la de la rama nunca toque los volúmenes de la de siempre.

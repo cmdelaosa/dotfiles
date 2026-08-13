@@ -61,16 +61,24 @@ if [ "$solo_limpiar" != 1 ]; then
     MERGED) paso "la PR #$numero ya estaba fusionada" ;;
     *)
       paso "compruebo el CI de la PR #$numero"
-      ci=0; esperar_ci --vigilar || ci=$?
-      case "$ci" in
-        1) aviso "" "No fusiono nada."; exit 1 ;;
-        2) aviso "" \
-             "No la fusiono." \
-             "" \
-             "Mírala tú y, cuando la fusiones, vuelve con:" \
-             "    cerrar-rama.sh $rama --solo-limpiar"
-           exit 0 ;;
-      esac
+      juzgar_ci() {
+        ci=0; esperar_ci --vigilar || ci=$?
+        case "$ci" in
+          1) aviso "" "No fusiono nada."; exit 1 ;;
+          2) aviso "" \
+               "No la fusiono." \
+               "" \
+               "Mírala tú y, cuando la fusiones, vuelve con:" \
+               "    cerrar-rama.sh $rama --solo-limpiar"
+             exit 0 ;;
+        esac
+      }
+      juzgar_ci
+
+      # Un verde viejo no vale: si main se ha movido, ese CI probó otra fusión.
+      # Se mete main en la rama, y el CI nuevo se juzga igual que el primero.
+      fresco=0; asegurar_ci_fresco || fresco=$?
+      [ "$fresco" = 10 ] && juzgar_ci
 
       paso "verde: fusiono la PR #$numero"
       $GH pr merge "$numero" --merge >&2 ||

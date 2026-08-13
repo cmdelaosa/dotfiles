@@ -80,18 +80,32 @@ case $accion in
       echo 'cannot use `--watch` with `--json` flag' >&2
       exit 1
     fi
+
+    # Cuándo acabaron los checks, para saber si el verde es anterior al main de
+    # ahora. El `--jq` de gh imprime un escalar en crudo, sin comillas, igual
+    # que `jq -r`.
+    case " $* " in
+      *" --json completedAt "*)
+        case "${ESCENARIO:-verde}" in
+          *-viejo) echo "2020-01-01T00:00:00Z" ;;   # main se movió DESPUÉS del verde
+          *)       echo "2999-01-01T00:00:00Z" ;;   # el verde es más nuevo que main
+        esac
+        exit 0 ;;
+    esac
+
     # Con `--watch` el de verdad bloquea hasta que terminan y NO imprime JSON;
     # aquí no hay nada que esperar, así que solo se calla.
     [ "$vigila" = 1 ] && exit 0
 
     case "${ESCENARIO:-verde}" in
-      verde | verde-borra)
-             echo '[{"bucket":"pass","name":"CI","link":"https://example.test/1"}]' ;;
-      rojo)  echo '[{"bucket":"fail","name":"CI","link":"https://example.test/1"}]'; exit 1 ;;
-      corriendo)
-             echo '[{"bucket":"pending","name":"CI","link":"https://example.test/1"}]' ;;
-      *)     exit 1 ;;   # sin checks: gh no imprime JSON ninguno
+      verde*)    echo '[{"bucket":"pass","name":"CI","link":"https://example.test/1"}]' ;;
+      rojo)      echo '[{"bucket":"fail","name":"CI","link":"https://example.test/1"}]'; exit 1 ;;
+      corriendo) echo '[{"bucket":"pending","name":"CI","link":"https://example.test/1"}]' ;;
+      *)         exit 1 ;;   # sin checks: gh no imprime JSON ninguno
     esac
+    ;;
+  update-branch)
+    printf 'update-branch %s\n' "$*" >> "$ESTADO/gh.log"
     ;;
   merge)
     rama=$(cat "$ESTADO/rama")
@@ -408,6 +422,18 @@ afirmar "y NO toca producción"              test -z "$(registro "$d" despliegue
 d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" sin-contrato 2>/dev/null); trabajar "$ruta" uno
 afirmar "sin contrato de despliegue, cierra" cerrar verde "$d" sin-contrato
 afirmar "y no intenta desplegar"             test -z "$(registro "$d" despliegues.log)"
+
+caso "cerrar-rama.sh: un verde viejo no vale"
+# El CI prueba la FUSIÓN con main, no la rama. Si main se movió después, ese
+# verde probó otra cosa — y GitHub la sigue marcando en verde igual.
+d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" verde-caducado 2>/dev/null); trabajar "$ruta" uno
+afirmar "cierra"                        cerrar verde-viejo "$d" verde-caducado
+afirmar "pero antes metió main en la rama y volvió a esperar" \
+        contiene "update-branch" "$(registro "$d" gh.log)"
+
+d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" verde-al-dia 2>/dev/null); trabajar "$ruta" uno
+afirmar "con el verde al día, cierra igual" cerrar verde "$d" verde-al-dia
+afirmar "y NO toca la rama sin necesidad"   no_contiene "update-branch" "$(registro "$d" gh.log)"
 
 caso "cerrar-rama.sh: se lleva la pila de la rama, con sus volúmenes"
 d=$(montar); con_workflow "$d"; con_compose "$d"
