@@ -42,6 +42,13 @@ shift 2
 
 case $accion in
   view)
+    case " $* " in
+      *" --jq .url "*) echo "https://example.test/pr/1"; exit 0 ;;
+    esac ;;
+esac
+
+case $accion in
+  view)
     rama=$1
     printf '%s' "$rama" > "$ESTADO/rama"
     [ -f "$ESTADO/pr-$rama" ] || exit 1
@@ -79,6 +86,38 @@ esac
 FALSO
 chmod +x "$TMP/bin/gh"
 export GH="$TMP/bin/gh"
+
+# Docker de mentira: no levanta nada, pero apunta todo lo que le piden. Las
+# comprobaciones de la pila se hacen sobre ese registro, no sobre contenedores
+# de verdad — la matriz no puede depender de que haya un Docker vivo.
+cat > "$TMP/bin/docker" <<'FALSO'
+#!/bin/bash
+set -u
+printf '%s\n' "$*" >> "$ESTADO/docker.log"
+case "$1 ${2:-}" in
+  "volume inspect") exit 1 ;;                 # ningún volumen existe todavía
+esac
+case "$*" in
+  *"ps -aq") echo "contenedor-de-mentira" ;;  # para que el `down` llegue a correr
+esac
+exit 0
+FALSO
+chmod +x "$TMP/bin/docker"
+export DOCKER="$TMP/bin/docker"
+
+cat > "$TMP/bin/avisador" <<'FALSO'
+#!/bin/bash
+printf '%s\n' "$*" >> "$ESTADO/avisos.log"
+FALSO
+chmod +x "$TMP/bin/avisador"
+export AVISADOR="$TMP/bin/avisador"
+
+cat > "$TMP/bin/desplegar.sh" <<'FALSO'
+#!/bin/bash
+printf '%s\n' "$*" >> "$ESTADO/despliegues.log"
+FALSO
+chmod +x "$TMP/bin/desplegar.sh"
+export DESPLEGAR="$TMP/bin/desplegar.sh"
 
 # ── Un repositorio nuevo por caso ───────────────────────────────────────────
 montar() {
@@ -140,6 +179,32 @@ con_workflow() { # con_workflow <dir>
   git -C "$1/repo" commit -qm "ci: workflow de mentira"
   git -C "$1/repo" push -q origin main
 }
+
+probar_rama() {  # probar_rama <escenario> <dir> [args…]
+  local esc=$1 d=$2; shift 2
+  ( cd "$d/repo" &&
+      ESTADO="$d/estado" ESPEJO="$d/espejo" ESCENARIO="$esc" ESPERA_CHECKS=0 ESPERA_PILA=1 \
+      "$bin/probar-rama.sh" "$@" )
+}
+
+# Un repositorio que se despliega: el contrato de cmdlo son estas dos cosas.
+con_contrato_de_despliegue() {  # con_contrato_de_despliegue <dir>
+  mkdir -p "$1/repo/ops/deploy" "$1/repo/.github/workflows"
+  printf '#!/bin/sh\n' > "$1/repo/ops/deploy/deploy.sh"
+  printf 'name: Release\non:\n  push:\n    branches: [main]\n' > "$1/repo/.github/workflows/release.yml"
+  git -C "$1/repo" add -A
+  git -C "$1/repo" commit -qm "ops: contrato de despliegue de mentira"
+  git -C "$1/repo" push -q origin main
+}
+
+con_compose() {  # con_compose <dir>
+  printf 'services:\n  frontend:\n    image: nginx\n' > "$1/repo/docker-compose.yml"
+  git -C "$1/repo" add -A
+  git -C "$1/repo" commit -qm "compose de mentira"
+  git -C "$1/repo" push -q origin main
+}
+
+registro() { cat "$1/estado/$2" 2>/dev/null || true; }
 
 contiene()    { printf '%s' "$2" | grep -qF -- "$1"; }
 no_contiene() { ! printf '%s' "$2" | grep -qF -- "$1"; }
@@ -260,6 +325,55 @@ negar "se niega con una rama que no existe" cerrar verde "$d" no-existe
 abrir "$d" sin-commits >/dev/null 2>&1
 negar "se niega si la rama no tiene ningún commit" cerrar verde "$d" sin-commits
 afirmar "y la deja donde estaba"        hay_rama "$d" sin-commits
+
+# ════════════════════════════════════════════════════════════════════════════
+caso "probar-rama.sh: no fusiona NUNCA, que es toda su razón de ser"
+d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" en-pruebas 2>/dev/null); trabajar "$ruta" uno
+afirmar "con el CI verde, sale bien"        probar_rama verde "$d" en-pruebas
+afirmar "y la rama sigue SIN fusionar"      hay_rama "$d" en-pruebas
+afirmar "y su worktree sigue en pie"        hay_worktree "$d" en-pruebas
+afirmar "y la rama remota sigue viva"       hay_remota "$d" en-pruebas
+
+caso "probar-rama.sh: sin verde no levanta nada"
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" rojo-no-levanta 2>/dev/null); trabajar "$ruta" uno
+negar   "CI en rojo: sale con error"        probar_rama rojo "$d" rojo-no-levanta
+afirmar "y no ha levantado ninguna pila"    no_contiene "up -d --build" "$(registro "$d" docker.log)"
+
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" sin-checks-no-levanta 2>/dev/null); trabajar "$ruta" uno
+afirmar "sin checks: sale bien…"            probar_rama sin-checks "$d" sin-checks-no-levanta
+afirmar "…pero tampoco levanta nada"        no_contiene "up -d --build" "$(registro "$d" docker.log)"
+
+caso "probar-rama.sh: en verde, levanta la pila de LA RAMA"
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" con-pila 2>/dev/null); trabajar "$ruta" uno
+negar   "sin nadie escuchando, acaba diciéndolo" probar_rama verde "$d" con-pila
+log=$(registro "$d" docker.log)
+afirmar "levantó un proyecto propio, no el de siempre" contiene "compose -p repo-con-pila up -d --build" "$log"
+afirmar "y la rama sigue sin fusionar"      hay_rama "$d" con-pila
+
+caso "cerrar-rama.sh: producción"
+d=$(montar); con_workflow "$d"; con_contrato_de_despliegue "$d"
+ruta=$(abrir "$d" con-despliegue 2>/dev/null); trabajar "$ruta" uno
+afirmar "cierra"                            cerrar verde "$d" con-despliegue
+afirmar "y despliega, nombrando el repo"    contiene "repo" "$(registro "$d" despliegues.log)"
+
+d=$(montar); con_workflow "$d"; con_contrato_de_despliegue "$d"
+ruta=$(abrir "$d" sin-desplegar 2>/dev/null); trabajar "$ruta" uno
+afirmar "con --sin-desplegar cierra igual"  cerrar verde "$d" sin-desplegar --sin-desplegar
+afirmar "y NO toca producción"              test -z "$(registro "$d" despliegues.log)"
+
+d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" sin-contrato 2>/dev/null); trabajar "$ruta" uno
+afirmar "sin contrato de despliegue, cierra" cerrar verde "$d" sin-contrato
+afirmar "y no intenta desplegar"             test -z "$(registro "$d" despliegues.log)"
+
+caso "cerrar-rama.sh: se lleva la pila de la rama, con sus volúmenes"
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" con-pila-que-cerrar 2>/dev/null); trabajar "$ruta" uno
+afirmar "cierra"                            cerrar verde "$d" con-pila-que-cerrar
+afirmar "tumbó la pila de la rama con --volumes" \
+        contiene "compose -p repo-con-pila-que-cerrar down --volumes" "$(registro "$d" docker.log)"
 
 echo
 if [ "$fallos" -eq 0 ]; then

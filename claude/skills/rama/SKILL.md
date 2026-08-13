@@ -39,4 +39,5 @@ cuatro worktrees abiertos no hay forma de saber cuál tiene qué sin entrar.
 - No trabajar en la raíz «solo para una cosa rápida». La colisión del 13-08-2026
   fue exactamente una cosa rápida.
 
-Al terminar, la skill `cerrar`.
+Al terminar de trabajar, la skill `probar`, que deja la rama levantada en local
+para que la mire su dueño. `cerrar` solo cuando dé el visto bueno.
