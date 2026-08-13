@@ -142,7 +142,12 @@ exigir_revision() {                     # exigir_revision <sin_revisar>
   fi
 
   local marca cabeza revisado
-  marca=$(ruta_marca_revision) || return 0
+  # Si no se puede leer la marca, no se pasa: un freno que no sabe responder
+  # tiene que decir que no. Fallar hacia el lado permisivo es no tener freno los
+  # días raros, que son justo los días en los que hace falta.
+  marca=$(ruta_marca_revision) ||
+    morir "No encuentro el directorio git de $ruta_wt," \
+          "así que no puedo saber si esto está revisado. No empujo."
   cabeza=$(git -C "$ruta_wt" rev-parse HEAD)
   revisado=$(cat "$marca" 2>/dev/null || true)
 

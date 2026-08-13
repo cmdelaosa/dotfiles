@@ -24,7 +24,9 @@ titulo() { printf '\n=== %s ===\n' "$1"; }
 # un hook PreToolUse con un error de sintaxis sale con 2, que significa
 # «bloqueado»: una errata aquí bloquea todo git en todas las sesiones.
 titulo "sintaxis de todos los .sh (bash 3.2, el de los hooks)"
+mirados=0
 while IFS= read -r guion; do
+  mirados=$((mirados + 1))
   if salida=$(/bin/bash -n "$guion" 2>&1); then
     printf '  ok      %s\n' "${guion#"$repo"/}"
   else
@@ -40,6 +42,14 @@ while IFS= read -r guion; do
 done < <(find "$repo" -name '*.sh' \
            -not -path '*/.git/*' \
            -not -path "$repo/.claude/worktrees/*" | sort)
+
+# Y la lista vacía se cuenta como fallo, que es la forma que tuvo de aparecer:
+# con el patrón mal, cero ficheros comprobados y un TODO BIEN idéntico al de
+# verdad. Un cero aquí no es «todo correcto», es «no he mirado nada».
+if [ "$mirados" -eq 0 ]; then
+  printf '  FALLO   no he encontrado ni un .sh que mirar; el filtro del find está mal\n'
+  fallos=$((fallos + 1))
+fi
 
 titulo "matriz de abrir/probar/cerrar-rama.sh"
 "$repo/claude/bin/probar-ramas.sh" || fallos=$((fallos + 1))
