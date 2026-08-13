@@ -32,6 +32,22 @@ norm=$(printf '%s' "$cmd" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
 # repo que desde fuera. A qué repo apunta se resuelve abajo, por separado.
 sin_c=$(printf '%s' "$norm" | sed -E 's#^git -C [^ ]+ #git #')
 
+# Y sin la tubería final ni el `2>&1`: `… --delete rama | tail -2` es como
+# escribe todo el mundo, y ni la tubería ni la redirección cambian lo que git
+# hace. Pero solo se quita si detrás NO se menciona git — así
+# `git push origin --delete rama | git push origin main` sigue sin encajar en
+# ninguna excepción, que es lo que tiene que pasar.
+cola=${sin_c#*|}
+if [ "$cola" != "$sin_c" ]; then
+  case "$cola" in
+    *git*) ;;
+    *) sin_c=${sin_c%%|*} ;;
+  esac
+fi
+# El espacio sobrante va PRIMERO: al cortar por la tubería queda uno pegado
+# detrás, y con él delante el `2>&1$` no casaba.
+sin_c=$(printf '%s' "$sin_c" | sed -E 's/ +$//; s/ 2>&1$//; s/ +$//')
+
 # Excepción 1 — sincronizar main con SU remoto tras fusionar una PR. Adelantar
 # el puntero hasta lo que ya está en origin no es trabajar sobre main, y sin
 # esto el hook se dispara cada vez que se vuelve de una PR.

@@ -47,6 +47,18 @@ probar BLOQUEA 'git commit -m "trampa --ff-only"'
 probar BLOQUEA 'git push origin main && git push origin --delete rama-x'
 probar BLOQUEA 'git push origin --delete rama-x && git push origin main'
 
+echo "--- la tubería final, que no cambia lo que git hace ---"
+probar PASA    'git push origin --delete rama-x | tail -2'
+probar PASA    'git push origin --delete rama-x 2>&1 | tail -2'
+probar PASA    'git pull --ff-only | tail -3'
+probar PASA    'git pull --ff-only 2>&1'
+probar PASA    'git push origin --delete rama-x | grep deleted | tail -1'
+# ...pero detrás de la tubería no se cuela un git.
+probar BLOQUEA 'git push origin --delete rama-x | git push origin main'
+probar BLOQUEA 'git push origin --delete rama-x | tail && git push origin main'
+probar BLOQUEA 'git push origin main | tail -2'
+probar BLOQUEA 'git pull --ff-only | git push origin main'
+
 echo "--- la limpieza de después de fusionar, que ahora TIENE que pasar ---"
 probar PASA 'git pull --ff-only'
 probar PASA 'git pull --ff-only origin main'
