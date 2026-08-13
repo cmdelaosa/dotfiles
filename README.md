@@ -26,7 +26,13 @@ sigue viniendo de aquí.
 | `claude/hooks/git-no-main.sh` | Rechaza `commit`/`merge`/`push` estando en `main`. La protección de rama de GitHub pide plan de pago y estos repositorios son privados en el gratuito: esto es lo único que hay |
 | `claude/hooks/git-una-sesion-por-checkout.sh` | Rechaza los verbos que mueven árbol o índice cuando hay otra sesión viva en la misma raíz de git, y lo avisa al arrancar |
 | `claude/hooks/dotfiles-al-dia.sh` | Avisa si la máquina y este repositorio han dejado de coincidir |
-| `claude/skills/` | `despliega`, `grill-me`, `new-project` |
+| `claude/hooks/probar-*.sh` | Las matrices de los dos hooks bloqueantes (64 y 57 casos) |
+| `claude/bin/abrir-rama.sh` | Abre la rama **y** su worktree `wt<rama>` desde `origin/<principal>` recién traído, y rechaza los nombres que no dicen nada |
+| `claude/bin/probar-rama.sh` | Empuja, abre la PR, espera al CI y —solo en verde— levanta la pila local de esa rama con una **copia** de los datos. No fusiona nunca |
+| `claude/bin/cerrar-rama.sh` | Recomprueba el verde, comprueba que no es anterior al `main` de ahora, fusiona, despliega si el repo tiene el contrato de cmdlo, y limpia pila, worktree y las dos ramas |
+| `claude/bin/lib-ramas.sh` | Lo que comparten los dos anteriores: resolver el repo, los frenos, el CI, la pila |
+| `claude/bin/probar-ramas.sh` | La matriz de los tres (121 casos), con GitHub, Docker, curl y nc de mentira |
+| `claude/skills/` | `rama`, `probar`, `cerrar` (el flujo de ramas), más `despliega`, `grill-me` y `new-project` |
 | `claude/output-styles/concise.md` | El estilo que referencia `settings.json`; sin él, la referencia queda coja |
 | `claude/templates/project/` | El esqueleto que usa el skill `new-project` |
 
@@ -55,8 +61,17 @@ Por eso `comprobar.sh` no mira el contenido: mira que **siga siendo un enlace**.
 eso lo llama un hook de `SessionStart`, para que la respuesta llegue sin que nadie
 tenga que acordarse de preguntar.
 
-## Al tocar un hook
+## Al tocar un hook o un guión de ramas
 
+- **Lanza su matriz, y rómpela a propósito para verla fallar.** Cada pieza tiene la
+  suya al lado: `claude/hooks/probar-git-no-main.sh`,
+  `claude/hooks/probar-git-una-sesion.sh` y `claude/bin/probar-ramas.sh`. Las tres
+  prueban por defecto **la copia de al lado**, que en un worktree es la que acabas de
+  escribir. `~/.claude/hooks` y `~/.claude/bin` son enlaces a la **raíz** del
+  repositorio, o sea a `main`: hasta el 13-08-2026 la matriz del hook apuntaba ahí por
+  defecto y daba verde sobre un fichero que no había leído. Con `HOOK=<ruta>` se
+  prueba el instalado, que es otra pregunta —«¿tiene la máquina lo que creo?»— y
+  también vale la pena hacerla.
 - Un hook `PreToolUse` que sale con **2 bloquea la herramienta**, y bash sale con 2
   ante un error de sintaxis: una errata aquí bloquea todo git. **`/bin/bash -n` antes
   de commitear**, y con `/bin/bash` (el 3.2 de Apple), no con el de Homebrew: el 3.2
@@ -64,3 +79,18 @@ tenga que acordarse de preguntar.
   el 5.x lo acepta sin rechistar.
 - Los cambios en `settings.json` y en los hooks **no valen para las sesiones ya
   abiertas**: se leen al arrancar. Basta con abrir una pestaña nueva.
+
+## Lo que las matrices no pueden probar
+
+`probar-ramas.sh` falsea `gh`, `docker`, `curl`, `nc` y el avisador, así que corre en
+cualquier sitio y no toca nada de verdad. Lo que eso deja fuera, y hay que probar a
+mano de vez en cuando **en welzy**, que es el único repositorio con pila:
+
+```bash
+~/.claude/bin/probar-rama.sh <una-rama-de-verdad>
+```
+
+Y comprobar con los ojos: que `docker volume ls` enseña un `<repo>-<rama>_postgres-data`
+nuevo con los datos dentro, que la URL abre la app con tu cartera y no una vacía, que
+la notificación llega, y que al cerrar la rama ese volumen desaparece y **el de tu pila
+de siempre sigue ahí**. Eso último es lo único de todo esto que puede destruir datos.
