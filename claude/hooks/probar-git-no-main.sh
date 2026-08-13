@@ -1,5 +1,10 @@
 #!/bin/bash
-# Prueba git-no-main.sh contra una matriz. Se ejecuta DESDE un repo en main.
+# Prueba git-no-main.sh contra una matriz. Se ejecuta desde DONDE SEA: monta sus
+# propios repos y se mete en uno que está en main, porque el hook resuelve la
+# rama desde su directorio de trabajo. Lanzarlo desde una rama daba 22 fallos
+# que no eran del hook — el hook deja pasar todo fuera de main, así que caían a
+# la vez los 22 casos de «BLOQUEA». Rojo falso, nunca verde falso, pero cuesta
+# un minuto averiguarlo.
 hook=~/.claude/hooks/git-no-main.sh
 fallos=0
 
@@ -29,6 +34,10 @@ for d in "$TMP_MAIN" "$TMP_RAMA"; do
   git -C "$d" -c user.email=t@t -c user.name=t commit -q --allow-empty -m inicial
 done
 git -C "$TMP_RAMA" checkout -q -b la-rama
+
+# Y se trabaja DESDE el que está en main: así los casos sin `-C` se juzgan
+# siempre contra un main, venga uno de donde venga.
+cd "$TMP_MAIN" || exit 1
 
 echo "--- lo que tiene que SEGUIR bloqueado (estando en main) ---"
 probar BLOQUEA 'git commit -m "algo"'
