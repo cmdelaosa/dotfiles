@@ -13,14 +13,14 @@
 
 ## Branch, PR, merge — never work on main
 
-- **Work never happens on `main`.** Every change starts with `git checkout -b <name-that-says-what-is-inside>` — never the random Docker-style name the harness invents.
+- **Work never happens on `main`.** Every change — in any repo — starts with `~/.claude/bin/abrir-rama.sh <name-that-says-what-is-inside>`, which opens the branch *and* its worktree and prints the path to enter with `EnterWorktree`. Not a courtesy: on 2026-08-13 three sessions landed in welzy's root at once, one moved HEAD under another, a WIP ended up inside someone else's PR (`5b727d2`, now in main's history) and a `commit` went straight onto `main`. Nobody chose to skip the worktree; opening one was a manual step, and manual steps get skipped. **Do this before touching the first file**, not after the first edit.
 - **Merging happens through a pull request, not locally.** Open it with `gh pr create`. The PR is where CI runs; a change that hasn't been judged by CI doesn't get merged.
-- **Merge from the PR, once it's green.** Then delete the branch — locally and on the remote — so no stale ref is left behind.
+- **Closing is one command too**: `~/.claude/bin/cerrar-rama.sh <branch>`, run from the repo root after leaving the worktree (`ExitWorktree`, `action: "keep"`). It pushes, opens the PR if missing, waits for CI, merges only on green, and then removes worktree, local branch and remote branch — in that order, which is the only one that works. **Never `gh pr merge --delete-branch`**: it merges on GitHub and then fails locally when a worktree holds the branch or holds `main`, leaving the branch alive and saying nothing.
 - Never `git commit`, `git merge` or `git push` while on `main`. A `PreToolUse` hook (`~/.claude/hooks/git-no-main.sh`) blocks all three and is the real enforcement: GitHub branch protection needs Pro or a public repo, and these repos are private on the free plan, so nothing server-side stops a direct push.
 - **Cleaning up after a merge is not "touching main", and the hook lets it through — no hatch needed** *(2026-08-13)*: `git pull --ff-only`, `git push origin --delete <branch>`, `git branch -D <branch>`, `git worktree remove <path>`. Two conditions: the branch must not be `main`/`master`, and **each command runs on its own**, because the hook matches the whole command line — chaining with `&&`, `;` or `||` throws the exception away. A trailing pipe is fine (`| tail -2`), as long as `git` isn't named after it. Asking for the hatch to delete an already-merged branch was spending it on the one thing that doesn't matter, and a hatch requested daily stops being read.
 - The hook has an escape hatch, `CLAUDE_ALLOW_MAIN=1`. **Don't reach for it on your own** — if touching `main` directly looks necessary, say why and let me decide. It exists for real writes to `main`, not for the cleanup above.
-- **The hook has its own test matrix**, `~/.claude/hooks/probar-git-no-main.sh` (27 cases). Run it after editing the hook, and prove the tests can fail by reintroducing the bug in a copy. That is how the `--ff-only` hole was found: the old exception matched that substring *anywhere* in the command, so even `git commit -m "fix the --ff-only thing"` sailed straight through.
-- If a repo has no CI yet, say so when opening the PR rather than treating "no checks" as a pass.
+- **Both the hook and the branch scripts have their own test matrix**: `~/.claude/hooks/probar-git-no-main.sh` and `~/.claude/bin/probar-ramas.sh`. Run the one you touched, and prove the tests can fail by reintroducing the bug in a copy. That is how the `--ff-only` hole was found: the old exception matched that substring *anywhere* in the command, so even `git commit -m "fix the --ff-only thing"` sailed straight through.
+- If a repo has no CI yet, say so when opening the PR rather than treating "no checks" as a pass. `cerrar-rama.sh` enforces this: with no checks it leaves the PR open and refuses to merge.
 
 ## Worktrees — named after their branch, with a `wt` prefix
 
@@ -29,12 +29,13 @@
   **Never** the random Docker-style name the harness invents
   (`focused-pascal-b3d58d`, `frosty-lamport-0953ed`): with four of those open at
   once there's no way to know which holds what without opening each one.
-- Pass the name when creating the worktree. If a session was born with a random
-  one, **rename the branch first and say so** — a worktree whose name no longer
+- **Don't build the name by hand** — `abrir-rama.sh` derives it from the branch,
+  and refuses the harness's pattern outright. If a session was born with a random
+  one, **rename the branch first and say so**: a worktree whose name no longer
   matches its branch is worse than a random one.
-- **Don't leave worktrees behind.** When a branch is merged and its PR closed,
-  remove its worktree in the same breath as deleting the branch. The default
-  state of a repo is **one worktree on `main`**, at the repo root.
+- **Don't leave worktrees behind.** `cerrar-rama.sh` removes the worktree in the
+  same breath as deleting the branch, and that is the point of it existing. The
+  default state of a repo is **one worktree on `main`**, at the repo root.
 - `main` belongs at the repo root, not in a scratch worktree. If `main` is
   checked out somewhere else, `gh pr merge` and `git checkout main` fail at the
   root with `'main' is already used by worktree at ...`.

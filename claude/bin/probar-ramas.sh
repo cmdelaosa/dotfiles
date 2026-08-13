@@ -1,0 +1,236 @@
+#!/bin/bash
+# Matriz de abrir-rama.sh y cerrar-rama.sh. Monta su propio remoto, su propio
+# repositorio y un GitHub de mentira, así que se ejecuta desde donde sea y no
+# toca nada de verdad.
+#
+# El `gh` falso no devuelve JSON y ya: fusiona **de verdad** en un espejo del
+# remoto. Sin eso, la comprobación de «¿está esta rama dentro de origin/main
+# antes de borrarla?» —que es el único freno que separa limpiar de perder
+# trabajo— se estaría probando contra una mentira.
+#
+# Al tocar cualquiera de los dos scripts: lánzalo, y rompe a propósito el caso
+# que te importe para verlo fallar. Un test que no puede fallar es la falsa
+# confianza de siempre.
+set -uo pipefail
+
+bin=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+fallos=0
+caso_actual=""
+
+caso()  { caso_actual="$1"; printf '\n--- %s ---\n' "$1"; }
+ok()    { printf '  ok      %s\n' "$1"; }
+mal()   { printf '  FALLO   %s\n' "$1"; fallos=$((fallos + 1)); }
+afirmar() { # afirmar <descripción> <condición...>
+  local d=$1; shift
+  if "$@" >/dev/null 2>&1; then ok "$d"; else mal "$d"; fi
+}
+negar() {   # negar <descripción> <condición...>
+  local d=$1; shift
+  if "$@" >/dev/null 2>&1; then mal "$d"; else ok "$d"; fi
+}
+
+# ── El GitHub de mentira ────────────────────────────────────────────────────
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/gh" <<'FALSO'
+#!/bin/bash
+set -eu
+[ "${1:-}" = pr ] || exit 1
+accion=$2
+shift 2
+
+case $accion in
+  view)
+    rama=$1
+    printf '%s' "$rama" > "$ESTADO/rama"
+    [ -f "$ESTADO/pr-$rama" ] || exit 1
+    case " $* " in
+      *" --jq .state "*)  cat "$ESTADO/pr-$rama" ;;
+      *" --jq .number "*) echo 1 ;;
+    esac
+    ;;
+  create)
+    rama=""
+    while [ $# -gt 0 ]; do [ "$1" = --head ] && rama=$2; shift; done
+    printf '%s' "$rama" > "$ESTADO/rama"
+    echo OPEN > "$ESTADO/pr-$rama"
+    echo "https://example.test/pr/1"
+    ;;
+  checks)
+    case "${ESCENARIO:-verde}" in
+      verde | verde-borra)
+             echo '[{"bucket":"pass","name":"CI","link":"https://example.test/1"}]' ;;
+      rojo)  echo '[{"bucket":"fail","name":"CI","link":"https://example.test/1"}]'; exit 1 ;;
+      *)     exit 1 ;;   # sin checks: gh no imprime JSON ninguno
+    esac
+    ;;
+  merge)
+    rama=$(cat "$ESTADO/rama")
+    git -C "$ESPEJO" fetch -q origin
+    git -C "$ESPEJO" checkout -q main
+    git -C "$ESPEJO" merge -q --no-ff "origin/$rama" -m "Merge pull request #1 from t/$rama"
+    git -C "$ESPEJO" push -q origin main
+    echo MERGED > "$ESTADO/pr-$rama"
+    # Muchos repositorios tienen activado «borrar la rama al fusionar».
+    if [ "${ESCENARIO:-}" = verde-borra ]; then git -C "$ESPEJO" push -q origin --delete "$rama"; fi
+    ;;
+esac
+FALSO
+chmod +x "$TMP/bin/gh"
+export GH="$TMP/bin/gh"
+
+# ── Un repositorio nuevo por caso ───────────────────────────────────────────
+montar() {
+  local d
+  d=$(mktemp -d "$TMP/caso.XXXXXX")
+  git init -q --bare -b main "$d/remoto.git"
+  git init -q -b main "$d/repo"
+  git -C "$d/repo" config user.email t@t
+  git -C "$d/repo" config user.name t
+  printf '.claude/worktrees/\n' > "$d/repo/.gitignore"
+  printf 'uno\n' > "$d/repo/f"
+  git -C "$d/repo" add -A
+  git -C "$d/repo" commit -qm inicial
+  git -C "$d/repo" remote add origin "$d/remoto.git"
+  git -C "$d/repo" push -q -u origin main
+  git -C "$d/repo" remote set-head origin -a >/dev/null
+  git -C "$d/repo" fetch -q origin
+  git clone -q "$d/remoto.git" "$d/espejo"
+  git -C "$d/espejo" config user.email t@t
+  git -C "$d/espejo" config user.name t
+  mkdir -p "$d/estado"
+  # Resuelta: en macOS /var es un enlace a /private/var, y los scripts imprimen
+  # la ruta que da git, que ya viene resuelta. Comparar sin esto es comparar
+  # dos formas de escribir el mismo sitio.
+  ( cd "$d" && pwd -P | tr -d '\n' )
+}
+
+# Commit de mentira en la rama, para que haya algo que fusionar.
+trabajar() { # trabajar <ruta-del-worktree> <texto>
+  printf '%s\n' "$2" > "$1/nuevo.txt"
+  git -C "$1" add -A
+  git -C "$1" commit -qm "feat: $2"
+}
+
+abrir() { ( cd "$1/repo" && ESTADO="$1/estado" ESPEJO="$1/espejo" "$bin/abrir-rama.sh" "$2" ); }
+
+# cerrar <escenario> <dir> [args…]. El escenario va de argumento y no de
+# `ESCENARIO=x cerrar …` por dos motivos que ya costaron cuatro falsos verdes:
+# `env VAR=x cerrar` no encuentra la función —busca un binario— y una asignación
+# delante de una función de bash se queda puesta DESPUÉS de la llamada, así que
+# se derramaría al caso siguiente.
+cerrar() {
+  local esc=$1 d=$2; shift 2
+  ( cd "$d/repo" &&
+      ESTADO="$d/estado" ESPEJO="$d/espejo" ESCENARIO="$esc" "$bin/cerrar-rama.sh" "$@" )
+}
+
+hay_worktree() { [ -d "$1/repo/.claude/worktrees/wt$2" ]; }
+hay_rama()     { git -C "$1/repo" show-ref --quiet --verify "refs/heads/$2"; }
+hay_remota()   { git -C "$1/repo" ls-remote --exit-code --heads origin "$2" >/dev/null 2>&1; }
+
+# ════════════════════════════════════════════════════════════════════════════
+caso "abrir-rama.sh: lo que tiene que salir bien"
+d=$(montar)
+ruta=$(abrir "$d" la-rama 2>/dev/null)
+afirmar "crea el worktree en .claude/worktrees/wtla-rama" hay_worktree "$d" la-rama
+afirmar "la rama existe"                                  hay_rama "$d" la-rama
+afirmar "imprime su ruta en la salida estándar" test "$ruta" = "$d/repo/.claude/worktrees/wtla-rama"
+
+caso "abrir-rama.sh: la rama sale de origin/main, no del HEAD local"
+d=$(montar)
+printf 'basura local\n' > "$d/repo/sin-empujar.txt"
+git -C "$d/repo" add -A >/dev/null
+git -C "$d/repo" commit -qm "commit local que nadie ha visto"
+abrir "$d" limpia >/dev/null 2>&1
+negar "el commit local sin empujar NO se cuela en la rama nueva" \
+  test -f "$d/repo/.claude/worktrees/wtlimpia/sin-empujar.txt"
+
+caso "abrir-rama.sh: lo que tiene que negarse"
+d=$(montar)
+negar "se niega a llamarse main"                 abrir "$d" main
+negar "se niega a llamarse master"               abrir "$d" master
+negar "se niega al nombre del harness"           abrir "$d" sleepy-pare-10a9f6
+negar "se niega a un nombre inválido para git"   abrir "$d" "con espacio"
+abrir "$d" ya-existe >/dev/null 2>&1
+negar "se niega si la rama ya existe"            abrir "$d" ya-existe
+
+# ════════════════════════════════════════════════════════════════════════════
+caso "cerrar-rama.sh: el freno"
+d=$(montar); ruta=$(abrir "$d" sucia 2>/dev/null); trabajar "$ruta" uno
+printf 'a medias\n' > "$ruta/a-medias.txt"
+negar    "para con el árbol sucio"                      cerrar verde "$d" sucia
+afirmar  "y NO ha borrado el worktree"                  hay_worktree "$d" sucia
+afirmar  "y NO ha borrado la rama"                      hay_rama "$d" sucia
+afirmar  "--forzar sí cierra"                           cerrar verde "$d" sucia --forzar
+negar    "ahora el worktree no está"                    hay_worktree "$d" sucia
+
+caso "cerrar-rama.sh: se niega desde dentro del worktree"
+d=$(montar); ruta=$(abrir "$d" desde-dentro 2>/dev/null); trabajar "$ruta" uno
+if ( cd "$ruta" && ESTADO="$d/estado" ESPEJO="$d/espejo" ESCENARIO=verde "$bin/cerrar-rama.sh" desde-dentro ) >/dev/null 2>&1
+then mal "se niega a borrar el directorio en el que está"
+else ok  "se niega a borrar el directorio en el que está"; fi
+afirmar "el worktree sigue" hay_worktree "$d" desde-dentro
+
+caso "cerrar-rama.sh: el CI manda"
+d=$(montar); ruta=$(abrir "$d" en-rojo 2>/dev/null); trabajar "$ruta" uno
+negar   "CI en rojo: no fusiona"        cerrar rojo "$d" en-rojo
+afirmar "y no ha borrado el worktree"   hay_worktree "$d" en-rojo
+afirmar "y no ha borrado la rama"       hay_rama "$d" en-rojo
+
+d=$(montar); ruta=$(abrir "$d" sin-ci 2>/dev/null); trabajar "$ruta" uno
+afirmar "sin checks: sale bien, pero…"  cerrar sin-checks "$d" sin-ci
+afirmar "…deja el worktree en pie"      hay_worktree "$d" sin-ci
+afirmar "…y la rama sin fusionar"       hay_rama "$d" sin-ci
+
+caso "cerrar-rama.sh: verde de punta a punta"
+d=$(montar); ruta=$(abrir "$d" verde 2>/dev/null); trabajar "$ruta" uno
+afirmar "cierra sin error"              cerrar verde "$d" verde
+negar   "no queda worktree"             hay_worktree "$d" verde
+negar   "no queda rama local"           hay_rama "$d" verde
+negar   "no queda rama remota"          hay_remota "$d" verde
+afirmar "la raíz sigue en main"         test "$(git -C "$d/repo" rev-parse --abbrev-ref HEAD)" = main
+afirmar "y main está adelantado con lo de la rama" test -f "$d/repo/nuevo.txt"
+
+caso "cerrar-rama.sh: si GitHub ya borró la rama remota, no falla"
+d=$(montar); ruta=$(abrir "$d" ya-borrada 2>/dev/null); trabajar "$ruta" uno
+afirmar "cierra igual"                  cerrar verde-borra "$d" ya-borrada
+negar   "no queda rama local"           hay_rama "$d" ya-borrada
+
+caso "cerrar-rama.sh: la raíz no siempre está en main"
+d=$(montar); ruta=$(abrir "$d" con-raiz-fuera 2>/dev/null); trabajar "$ruta" uno
+git -C "$d/repo" checkout -q -b otra-cosa
+afirmar "cierra igual, avisando"        cerrar verde "$d" con-raiz-fuera
+negar   "no queda worktree"             hay_worktree "$d" con-raiz-fuera
+afirmar "y NO ha movido la raíz"        test "$(git -C "$d/repo" rev-parse --abbrev-ref HEAD)" = otra-cosa
+
+d=$(montar); ruta=$(abrir "$d" con-raiz-sucia 2>/dev/null); trabajar "$ruta" uno
+printf 'a medias en la raíz\n' > "$d/repo/raiz-a-medias.txt"
+afirmar "con la raíz sucia cierra igual" cerrar verde "$d" con-raiz-sucia
+afirmar "y no se lleva por delante lo que había" test -f "$d/repo/raiz-a-medias.txt"
+
+caso "cerrar-rama.sh: --solo-limpiar"
+d=$(montar); ruta=$(abrir "$d" limpiar-despues 2>/dev/null); trabajar "$ruta" uno
+cerrar verde "$d" limpiar-despues >/dev/null 2>&1   # fusionada de verdad
+d2=$(montar); ruta2=$(abrir "$d2" sin-fusionar 2>/dev/null); trabajar "$ruta2" uno
+negar   "se niega a limpiar una rama que no está en origin/main" \
+        cerrar verde "$d2" sin-fusionar --solo-limpiar
+afirmar "y no ha borrado nada"          hay_rama "$d2" sin-fusionar
+
+caso "cerrar-rama.sh: lo que no tiene sentido"
+d=$(montar)
+negar "se niega sobre main"             cerrar verde "$d" main
+negar "se niega sobre master"           cerrar verde "$d" master
+negar "se niega con una rama que no existe" cerrar verde "$d" no-existe
+abrir "$d" sin-commits >/dev/null 2>&1
+negar "se niega si la rama no tiene ningún commit" cerrar verde "$d" sin-commits
+afirmar "y la deja donde estaba"        hay_rama "$d" sin-commits
+
+echo
+if [ "$fallos" -eq 0 ]; then
+  echo "TODO BIEN: 0 fallos"
+else
+  echo "$fallos FALLOS"
+  exit 1
+fi
