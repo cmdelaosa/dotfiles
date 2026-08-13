@@ -1,6 +1,12 @@
 #!/bin/bash
-# Deja una rama lista para que la pruebes: empuja, abre la PR, espera al CI y, si
-# está verde, levanta SU pila local con una copia de tus datos y te avisa.
+# Deja una rama lista para que la pruebes: comprueba en local, exige que el diff
+# esté revisado, empuja, abre la PR, espera al CI y, si está verde, levanta SU
+# pila local con una copia de tus datos y te avisa.
+#
+# Los dos frenos van ANTES del push a propósito. `verificar.sh` porque descubrir
+# un lint roto en el CI cuesta el viaje entero, y la revisión porque una PR que
+# nace ya con lo que el revisor ha dicho se lee de una vez, en vez de crecer
+# tres commits de «arreglo lo revisado» que también hay que leer.
 #
 # **No fusiona nada.** Esa es toda la idea: hasta el 13-08-2026 `cerrar-rama.sh`
 # fusionaba sola en cuanto el CI se ponía verde, y eso deja fuera lo único que el
@@ -18,19 +24,24 @@ set -Eeuo pipefail
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib-ramas.sh"
 
-rama_arg=""; forzar=0; sin_ci=0; sin_pila=0
+rama_arg=""; forzar=0; sin_ci=0; sin_pila=0; sin_verificar=0; sin_revisar=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --forzar)   forzar=1 ;;
-    --sin-ci)   sin_ci=1 ;;
-    --sin-pila) sin_pila=1 ;;
+    --forzar)        forzar=1 ;;
+    --sin-ci)        sin_ci=1 ;;
+    --sin-pila)      sin_pila=1 ;;
+    --sin-verificar) sin_verificar=1 ;;
+    --sin-revisar)   sin_revisar=1 ;;
     -h | --help)
       morir "Uso: probar-rama.sh [<rama>] [--forzar] [--sin-ci] [--sin-pila]" \
+        "                        [--sin-verificar] [--sin-revisar]" \
         "" \
-        "  <rama>       la que se prueba. Por defecto, la del directorio actual." \
-        "  --forzar     sigue aunque haya cambios sin guardar." \
-        "  --sin-ci     no espera al CI: levanta la pila y ya." \
-        "  --sin-pila   solo empuja y abre la PR; no levanta nada." ;;
+        "  <rama>            la que se prueba. Por defecto, la del directorio actual." \
+        "  --forzar          sigue aunque haya cambios sin guardar." \
+        "  --sin-ci          no espera al CI: levanta la pila y ya." \
+        "  --sin-pila        solo empuja y abre la PR; no levanta nada." \
+        "  --sin-verificar   no lanza el verificar.sh de la rama." \
+        "  --sin-revisar     empuja aunque el diff no esté revisado." ;;
     -*) morir "Opción desconocida: $1" ;;
     *)  [ -z "$rama_arg" ] || morir "Sobra un argumento: $1"; rama_arg="$1" ;;
   esac
@@ -41,6 +52,11 @@ resolver_repo "$rama_arg" probar
 exigir_arbol_limpio "$forzar"
 [ -n "$ruta_wt" ] || morir "La rama '$rama' no tiene worktree." \
   "Ábrelo con: abrir-rama.sh $rama"
+
+# Primero lo mecánico y luego lo que hay que leer: si `verificar.sh` está rojo,
+# la revisión se habría gastado en código que ni siquiera pasa el lint.
+exigir_verificacion "$sin_verificar"
+exigir_revision "$sin_revisar"
 
 empujar_y_abrir_pr
 

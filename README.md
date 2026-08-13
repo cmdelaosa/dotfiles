@@ -15,7 +15,8 @@ git clone https://github.com/cmdelaosa/dotfiles.git ~/Projects/dotfiles
 
 `instalar.sh` es idempotente y **no pisa nada**: lo que encuentre como fichero de
 verdad lo aparta con fecha antes de enlazar. `comprobar.sh` dice si `~/.claude`
-sigue viniendo de aquí.
+sigue viniendo de aquí, y `verificar.sh` dice si un cambio de este repositorio se
+sostiene: son dos preguntas distintas y por eso son dos guiones.
 
 ## Qué hay dentro
 
@@ -26,7 +27,9 @@ sigue viniendo de aquí.
 | `claude/hooks/git-no-main.sh` | Rechaza `commit`/`merge`/`push` estando en `main`. La protección de rama de GitHub pide plan de pago y estos repositorios son privados en el gratuito: esto es lo único que hay |
 | `claude/hooks/git-una-sesion-por-checkout.sh` | Rechaza los verbos que mueven árbol o índice cuando hay otra sesión viva en la misma raíz de git, y lo avisa al arrancar |
 | `claude/hooks/dotfiles-al-dia.sh` | Avisa si la máquina y este repositorio han dejado de coincidir |
-| `claude/skills/` | `despliega`, `grill-me`, `new-project` |
+| `claude/bin/` | `abrir-rama.sh`, `probar-rama.sh`, `marcar-revisado.sh`, `cerrar-rama.sh` y su matriz `probar-ramas.sh`: el flujo entero de rama → PR → fusión |
+| `claude/skills/` | `rama`, `probar`, `cerrar`, `despliega`, `grill-me`, `new-project` |
+| `verificar.sh` | Sintaxis de todos los guiones y las dos matrices de pruebas. Lo lanza `probar-rama.sh` antes de empujar, así que un lint roto se ve aquí y no doce minutos después en el CI |
 | `claude/output-styles/concise.md` | El estilo que referencia `settings.json`; sin él, la referencia queda coja |
 | `claude/templates/project/` | El esqueleto que usa el skill `new-project` |
 

@@ -82,6 +82,90 @@ exigir_arbol_limpio() {                 # exigir_arbol_limpio <forzar>
   printf '%s\n' "$sucio" | sed 's/^/    /' >&2
 }
 
+# ── Antes de empujar: lo que se puede comprobar sin GitHub ──────────────────
+# El CI es el juez, pero tarda —doce minutos en welzy— y cobra el viaje entero
+# por un `lint` que aquí se ve en veinte segundos. `verificar.sh` en la raíz del
+# repositorio es ese subconjunto rápido: formato, lint, tipos y unitarios.
+#
+# Se ejecuta el del WORKTREE, no el de la raíz: es el que la rama ha podido
+# cambiar, y una rama que rompe su propia verificación tiene que verlo. Si no
+# hay ninguno se avisa y se sigue —como con el `docker-compose.yml`—, porque no
+# todos los repositorios tienen uno todavía.
+exigir_verificacion() {                 # exigir_verificacion <sin_verificar>
+  [ -n "$ruta_wt" ] || return 0
+
+  if [ "${1:-0}" = 1 ]; then
+    aviso "OJO: --sin-verificar; esto no lo ha comprobado nadie en local."
+    return 0
+  fi
+
+  local guion="$ruta_wt/verificar.sh"
+  if [ ! -e "$guion" ]; then
+    paso "aquí no hay verificar.sh: el CI es la única red"
+    return 0
+  fi
+  # Sin permiso de ejecución es peor que no tenerlo: parece que algo comprueba
+  # la rama, y no la comprueba nadie.
+  [ -x "$guion" ] || morir "$guion existe pero no es ejecutable." \
+    "Arréglalo:  chmod +x $guion"
+
+  paso "verificar.sh"
+  ( cd "$ruta_wt" && "$guion" ) >&2 ||
+    morir "" "verificar.sh ha fallado: no empujo nada." \
+             "El CI diría lo mismo, pero doce minutos más tarde."
+}
+
+# ── Antes de empujar: la revisión ───────────────────────────────────────────
+# La PR se abre con lo que el revisor ya ha dicho DENTRO. Revisar después es
+# abrir una PR que se corrige a base de commits de «arreglo lo revisado», que es
+# justo lo que `probar-rama.sh` evita en el otro extremo con la pila local.
+#
+# Quien revisa es `/code-review`, y eso no lo puede lanzar un guión de bash: lo
+# lanza la skill `probar`, aplica lo que salga, commitea y deja la marca. Aquí
+# solo se comprueba que la marca esté puesta y sea de ESTOS commits — que es lo
+# que convierte «acuérdate de revisar» en algo que no se puede olvidar.
+#
+# La marca vive en el directorio git del worktree: ni se commitea, ni viaja a
+# nadie, y `git worktree remove` se la lleva con todo lo demás.
+ruta_marca_revision() {                 # ruta_marca_revision → imprime la ruta
+  local gitdir
+  gitdir=$(git -C "$ruta_wt" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+  printf '%s/revisado' "$gitdir"
+}
+
+exigir_revision() {                     # exigir_revision <sin_revisar>
+  [ -n "$ruta_wt" ] || return 0
+
+  if [ "${1:-0}" = 1 ]; then
+    aviso "OJO: --sin-revisar; la PR se abre sin que nadie haya leído el diff."
+    return 0
+  fi
+
+  local marca cabeza revisado
+  marca=$(ruta_marca_revision) || return 0
+  cabeza=$(git -C "$ruta_wt" rev-parse HEAD)
+  revisado=$(cat "$marca" 2>/dev/null || true)
+
+  if [ "$revisado" = "$cabeza" ]; then
+    paso "revisada en ${cabeza:0:7}"
+    return 0
+  fi
+
+  # Una marca vieja no es media revisión: es una revisión de otro código. Se
+  # dice cuál era, porque el caso normal es «revisé, y luego commiteé una cosa
+  # más», y ahí ayuda saber que solo falta volver a pasar por lo nuevo.
+  [ -z "$revisado" ] ||
+    aviso "" "La revisión que hay es de ${revisado:0:7}, y la rama va por ${cabeza:0:7}."
+
+  morir "" \
+    "Estos commits no han pasado por el revisor, y la PR se abre con sus" \
+    "arreglos dentro, no antes de que los diga." \
+    "" \
+    "  En Claude Code:   la skill \`probar\` (/probar) — revisa, arregla, commitea y marca." \
+    "  Ya está revisado: marcar-revisado.sh $rama" \
+    "  Saltárselo:       probar-rama.sh $rama --sin-revisar"
+}
+
 # ── La PR ───────────────────────────────────────────────────────────────────
 # Empuja y deja `numero` y `estado` puestos. Abre la PR si no la había.
 empujar_y_abrir_pr() {

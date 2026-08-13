@@ -239,6 +239,20 @@ con_compose() {  # con_compose <dir>
   git -C "$1/repo" push -q origin main
 }
 
+# El verificar.sh de la rama: formato, lint y unitarios en el repo de verdad;
+# aquí, un `exit` que se elige. Va a main ANTES de abrir la rama, que es como
+# llega a los worktrees.
+con_verificar() {  # con_verificar <dir> <código-de-salida>
+  printf '#!/bin/sh\necho "verificar.sh de mentira"\nexit %s\n' "$2" > "$1/repo/verificar.sh"
+  chmod +x "$1/repo/verificar.sh"
+  git -C "$1/repo" add -A
+  git -C "$1/repo" commit -qm "verificar.sh de mentira (sale $2)"
+  git -C "$1/repo" push -q origin main
+}
+
+# Lo que deja la skill `probar` después de pasar el revisor por el diff.
+revisar() { ( cd "$1/repo" && "$bin/marcar-revisado.sh" "$2" ); }
+
 registro() { cat "$1/estado/$2" 2>/dev/null || true; }
 
 contiene()    { printf '%s' "$2" | grep -qF -- "$1"; }
@@ -384,6 +398,7 @@ afirmar "y la deja donde estaba"        hay_rama "$d" sin-commits
 # ════════════════════════════════════════════════════════════════════════════
 caso "probar-rama.sh: no fusiona NUNCA, que es toda su razón de ser"
 d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" en-pruebas 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" en-pruebas >/dev/null 2>&1
 afirmar "con el CI verde, sale bien"        probar_rama verde "$d" en-pruebas
 afirmar "y la rama sigue SIN fusionar"      hay_rama "$d" en-pruebas
 afirmar "y su worktree sigue en pie"        hay_worktree "$d" en-pruebas
@@ -392,21 +407,100 @@ afirmar "y la rama remota sigue viva"       hay_remota "$d" en-pruebas
 caso "probar-rama.sh: sin verde no levanta nada"
 d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" rojo-no-levanta 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" rojo-no-levanta >/dev/null 2>&1
 negar   "CI en rojo: sale con error"        probar_rama rojo "$d" rojo-no-levanta
 afirmar "y no ha levantado ninguna pila"    no_contiene "up -d --build" "$(registro "$d" docker.log)"
 
 d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" sin-checks-no-levanta 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" sin-checks-no-levanta >/dev/null 2>&1
 afirmar "sin checks: sale bien…"            probar_rama sin-checks "$d" sin-checks-no-levanta
 afirmar "…pero tampoco levanta nada"        no_contiene "up -d --build" "$(registro "$d" docker.log)"
 
 caso "probar-rama.sh: en verde, levanta la pila de LA RAMA"
 d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" con-pila 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" con-pila >/dev/null 2>&1
 negar   "sin nadie escuchando, acaba diciéndolo" probar_rama verde "$d" con-pila
 log=$(registro "$d" docker.log)
 afirmar "levantó un proyecto propio, no el de siempre" contiene "compose -p repo-con-pila up -d --build" "$log"
 afirmar "y la rama sigue sin fusionar"      hay_rama "$d" con-pila
+
+# ════════════════════════════════════════════════════════════════════════════
+caso "probar-rama.sh: verificar.sh manda, y manda antes que el CI"
+# Descubrir en el CI lo que se ve en local es pagar doce minutos por un lint.
+d=$(montar); con_workflow "$d"; con_verificar "$d" 1
+ruta=$(abrir "$d" verificar-rojo 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" verificar-rojo >/dev/null 2>&1
+negar   "con verificar.sh en rojo, no sigue"     probar_rama verde "$d" verificar-rojo
+negar   "y no ha abierto ninguna PR"             test -f "$d/estado/pr-verificar-rojo"
+negar   "ni ha empujado la rama"                 hay_remota "$d" verificar-rojo
+
+d=$(montar); con_workflow "$d"; con_verificar "$d" 0
+ruta=$(abrir "$d" verificar-verde 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" verificar-verde >/dev/null 2>&1
+afirmar "con verificar.sh en verde, sigue"       probar_rama verde "$d" verificar-verde
+afirmar "y la PR queda abierta"                  test -f "$d/estado/pr-verificar-verde"
+
+d=$(montar); con_workflow "$d"; con_verificar "$d" 1
+ruta=$(abrir "$d" saltarse-verificar 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" saltarse-verificar >/dev/null 2>&1
+afirmar "--sin-verificar pasa por encima"        probar_rama verde "$d" saltarse-verificar --sin-verificar
+
+# Un verificar.sh sin permiso de ejecución parece una red y no lo es: se para y
+# se dice, en vez de seguir como si el repositorio no tuviera ninguno.
+d=$(montar); con_workflow "$d"; con_verificar "$d" 0
+ruta=$(abrir "$d" sin-permiso 2>/dev/null); trabajar "$ruta" uno
+chmod -x "$ruta/verificar.sh"
+git -C "$ruta" update-index --chmod=-x verificar.sh
+git -C "$ruta" commit -qm "verificar.sh sin permiso de ejecución"
+revisar "$d" sin-permiso >/dev/null 2>&1
+negar   "un verificar.sh no ejecutable para la cosa"  probar_rama verde "$d" sin-permiso
+negar   "y tampoco abre PR"                           test -f "$d/estado/pr-sin-permiso"
+
+# Y un repositorio sin verificar.sh sigue funcionando: la mitad de los repos no
+# tienen uno todavía, y un freno que rompe lo que ya iba no se instala.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" sin-verificar-ninguno 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" sin-verificar-ninguno >/dev/null 2>&1
+msg=$(probar_rama verde "$d" sin-verificar-ninguno 2>&1) && ok_pr=0 || ok_pr=1
+afirmar "sin verificar.sh, sigue adelante"       test "$ok_pr" = 0
+afirmar "pero lo dice"                           contiene "no hay verificar.sh" "$msg"
+
+caso "probar-rama.sh: sin revisar no hay PR"
+# La PR tiene que nacer con lo que el revisor haya dicho ya dentro.
+d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" sin-revisar 2>/dev/null); trabajar "$ruta" uno
+msg=$(probar_rama verde "$d" sin-revisar 2>&1) && paso_sin_marca=0 || paso_sin_marca=1
+afirmar "sin marca de revisión, se para"         test "$paso_sin_marca" = 1
+afirmar "y dice cómo salir de ahí"               contiene "marcar-revisado.sh" "$msg"
+negar   "no ha abierto ninguna PR"               test -f "$d/estado/pr-sin-revisar"
+negar   "ni ha empujado la rama"                 hay_remota "$d" sin-revisar
+afirmar "--sin-revisar pasa por encima"          probar_rama verde "$d" sin-revisar --sin-revisar
+afirmar "y entonces sí hay PR"                   test -f "$d/estado/pr-sin-revisar"
+
+# El caso que hace que la marca valga algo: se revisa, y después se commitea una
+# cosa más. Esa cosa más no la ha visto nadie.
+caso "probar-rama.sh: la marca caduca con el commit siguiente"
+d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" marca-caducada 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" marca-caducada >/dev/null 2>&1
+trabajar "$ruta" dos
+negar   "un commit posterior a la revisión vuelve a frenar" \
+        probar_rama verde "$d" marca-caducada
+negar   "y sigue sin haber PR"                   test -f "$d/estado/pr-marca-caducada"
+revisar "$d" marca-caducada >/dev/null 2>&1
+afirmar "al volver a revisar, pasa"              probar_rama verde "$d" marca-caducada
+
+caso "marcar-revisado.sh: qué escribe y qué se niega a escribir"
+d=$(montar)
+negar "se niega sobre main"                      revisar "$d" main
+negar "se niega con una rama que no existe"      revisar "$d" no-existe
+ruta=$(abrir "$d" marcable 2>/dev/null); trabajar "$ruta" uno
+afirmar "sobre una rama con worktree, marca"     revisar "$d" marcable
+afirmar "y lo que escribe es el HEAD de la rama" \
+        test "$(cat "$d/repo/.git/worktrees/wtmarcable/revisado" 2>/dev/null)" \
+           = "$(git -C "$ruta" rev-parse HEAD)"
+negar   "la marca no se cuela en el repositorio" \
+        test -n "$(git -C "$ruta" status --porcelain)"
 
 caso "cerrar-rama.sh: producción"
 d=$(montar); con_workflow "$d"; con_contrato_de_despliegue "$d"
