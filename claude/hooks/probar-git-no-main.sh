@@ -46,6 +46,9 @@ probar BLOQUEA 'git merge --ff-only 888755e'
 probar BLOQUEA 'git commit -m "trampa --ff-only"'
 probar BLOQUEA 'git push origin main && git push origin --delete rama-x'
 probar BLOQUEA 'git push origin --delete rama-x && git push origin main'
+# Y encadenar descarta la excepción sea cual sea el operador, no solo con &&.
+probar BLOQUEA 'git branch -D rama-x; git push origin --delete rama-x'
+probar BLOQUEA 'git push origin --delete rama-x || git push origin main'
 
 echo "--- la tubería final, que no cambia lo que git hace ---"
 probar PASA    'git push origin --delete rama-x | tail -2'

@@ -146,7 +146,9 @@ Limpiar después de fusionar SÍ pasa por aquí, no hace falta escotilla:
   git push origin --delete <rama>        — borrar la rama fusionada
   git branch -D <rama>                   — y su copia local
   git worktree remove <ruta>             — y su worktree
-Cada una suelta, sin encadenar con &&: el hook mira la orden entera.
+Cada una SUELTA: el hook compara la orden entera, así que encadenar con &&, ;
+o || la descarta. Una tubería final sí vale (| tail -2), mientras detrás no se
+nombre git.
 
 Si de verdad hace falta tocar main, díselo a Carlos y que lo apruebe él:
   CLAUDE_ALLOW_MAIN=1 $cmd
