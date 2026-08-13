@@ -317,8 +317,12 @@ con_compose() {  # con_compose <dir>
 # El verificar.sh de la rama: formato, lint y unitarios en el repo de verdad;
 # aquí, un `exit` que se elige. Va a main ANTES de abrir la rama, que es como
 # llega a los worktrees.
+#
+# Apunta su directorio de trabajo, porque de dónde se lanza no es un detalle: el
+# de la RAMA es el que la rama ha podido cambiar, y un `verificar.sh` que se
+# lanzara desde la raíz estaría comprobando otro árbol.
 con_verificar() {  # con_verificar <dir> <código-de-salida>
-  printf '#!/bin/sh\necho "verificar.sh de mentira"\nexit %s\n' "$2" > "$1/repo/verificar.sh"
+  printf '#!/bin/sh\npwd > "$ESTADO/verificar.cwd"\necho "verificar.sh de mentira"\nexit %s\n' "$2" > "$1/repo/verificar.sh"
   chmod +x "$1/repo/verificar.sh"
   git -C "$1/repo" add -A
   git -C "$1/repo" commit -qm "verificar.sh de mentira (sale $2)"
@@ -563,6 +567,8 @@ ruta=$(abrir "$d" verificar-verde 2>/dev/null); trabajar "$ruta" uno
 revisar "$d" verificar-verde >/dev/null 2>&1
 afirmar "con verificar.sh en verde, sigue"       probar_rama verde "$d" verificar-verde
 afirmar "y la PR queda abierta"                  test -f "$d/estado/pr-verificar-verde"
+afirmar "lo lanzó desde el worktree de la rama, no desde la raíz" \
+        test "$(registro "$d" verificar.cwd)" = "$ruta"
 
 d=$(montar); con_workflow "$d"; con_verificar "$d" 1
 ruta=$(abrir "$d" saltarse-verificar 2>/dev/null); trabajar "$ruta" uno
@@ -588,6 +594,15 @@ revisar "$d" sin-verificar-ninguno >/dev/null 2>&1
 msg=$(probar_rama verde "$d" sin-verificar-ninguno 2>&1) && ok_pr=0 || ok_pr=1
 afirmar "sin verificar.sh, sigue adelante"       test "$ok_pr" = 0
 afirmar "pero lo dice"                           contiene "no hay verificar.sh" "$msg"
+
+# Una rama sin un solo commit no llega a gastar el verificar.sh: se le dice antes
+# de empezar. Con el verificar.sh en rojo a propósito, para que el mensaje que
+# salga no pueda ser el suyo.
+d=$(montar); con_workflow "$d"; con_verificar "$d" 1
+abrir "$d" nada-que-empujar >/dev/null 2>&1
+msg=$(probar_rama verde "$d" nada-que-empujar 2>&1) || true
+afirmar "una rama vacía se para por vacía…"      contiene "ningún commit" "$msg"
+negar   "…y no llega a lanzar el verificar.sh"   test -f "$d/estado/verificar.cwd"
 
 caso "probar-rama.sh: sin revisar no hay PR"
 # La PR tiene que nacer con lo que el revisor haya dicho ya dentro.

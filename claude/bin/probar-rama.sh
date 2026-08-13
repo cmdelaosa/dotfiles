@@ -53,6 +53,10 @@ exigir_arbol_limpio "$forzar"
 [ -n "$ruta_wt" ] || morir "La rama '$rama' no tiene worktree." \
   "Ábrelo con: abrir-rama.sh $rama"
 
+# Antes que nada, que haya algo que empujar: comprobar y revisar una rama vacía
+# es gastar minutos para acabar diciendo que no había nada que hacer.
+hay_algo_que_empujar
+
 # Primero lo mecánico y luego lo que hay que leer: si `verificar.sh` está rojo,
 # la revisión se habría gastado en código que ni siquiera pasa el lint.
 exigir_verificacion "$sin_verificar"

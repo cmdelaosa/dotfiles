@@ -177,15 +177,29 @@ exigir_revision() {                     # exigir_revision <sin_revisar>
 }
 
 # ── La PR ───────────────────────────────────────────────────────────────────
-# Empuja y deja `numero` y `estado` puestos. Abre la PR si no la había.
-empujar_y_abrir_pr() {
+# Lo único que hace falta saber ANTES de gastar tiempo en verificar y en revisar:
+# que haya algo que empujar. Vivía dentro de `empujar_y_abrir_pr`, o sea DESPUÉS
+# de los dos frenos, y con eso una rama sin un solo commit se comía el
+# `verificar.sh` entero —minuto y medio de matrices en este repositorio— para
+# acabar diciendo que no había nada que hacer.
+#
+# `ya_traido` para no traer dos veces: lo llaman probar-rama.sh al principio y
+# `empujar_y_abrir_pr` después, y el segundo `fetch` no aportaría nada.
+hay_algo_que_empujar() {
   [ "$hubo_remoto" = 1 ] || morir "Este repositorio no tiene remoto: no hay PR."
 
-  git -C "$raiz" fetch origin --quiet --prune
-  local pendientes
+  [ "${ya_traido:-0}" = 1 ] || {
+    git -C "$raiz" fetch origin --quiet --prune
+    ya_traido=1
+  }
   pendientes=$(git -C "$raiz" rev-list --count "origin/$principal..$rama")
   [ "$pendientes" -gt 0 ] ||
     morir "La rama '$rama' no tiene ningún commit que origin/$principal no tenga."
+}
+
+# Empuja y deja `numero` y `estado` puestos. Abre la PR si no la había.
+empujar_y_abrir_pr() {
+  hay_algo_que_empujar
 
   paso "empujo $rama ($pendientes commit(s))"
   git -C "$raiz" push --quiet -u origin "$rama"
