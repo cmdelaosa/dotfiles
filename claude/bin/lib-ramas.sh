@@ -109,36 +109,48 @@ empujar_y_abrir_pr() {
 # ── El CI ───────────────────────────────────────────────────────────────────
 # Sale 0 si está verde, 1 si está rojo, 2 si no hay checks. Imprime el porqué.
 esperar_ci() {                          # esperar_ci [--vigilar]
-  local vigilar=() codigo=0 salida hay_workflows espera malos
-  [ "${1:-}" = --vigilar ] && vigilar=(--watch --fail-fast)
+  local vigilar=0 salida hay_workflows espera malos corriendo
 
-  codigo=0
-  salida=$($GH pr checks "$rama" ${vigilar[@]+"${vigilar[@]}"} --json bucket,name,link 2>/dev/null) || codigo=$?
+  [ "${1:-}" = --vigilar ] && vigilar=1
 
-  # «No hay checks» tiene dos causas MUY distintas, y hasta el 13-08-2026 las dos
-  # daban el mismo mensaje —«este repositorio no tiene CI»—, que en welzy es
-  # falso: tiene `ci.yml`, y lo que pasa es que su `paths-ignore` deja fuera las
-  # PRs de solo markdown a propósito.
+  # ⚠️ **`--watch` y `--json` no se piden a la vez.** El propio `gh` lo rechaza
+  # —«cannot use `--watch` with `--json` flag»— y saca la usage por stderr, que
+  # aquí va a /dev/null. Juntos dejaban la salida SIEMPRE vacía, y una salida
+  # vacía es justo lo que esta función lee como «no hay checks»: desde que el
+  # 13-08-2026 se partió esto en `probar` y `cerrar` —que es cuando nació
+  # `--vigilar`—, `cerrar-rama.sh` se negaba a fusionar CUALQUIER rama de
+  # CUALQUIER repositorio, diciendo que la PR no había disparado ningún check
+  # mientras `gh pr checks` enseñaba el verde al lado.
+  #
+  # Así que van por separado y en tres tiempos: se espera a que los checks
+  # existan, se vigila hasta que terminen, y solo entonces se lee el veredicto.
+
+  # 1. Que existan. Un workflow tarda unos segundos en registrarse y
+  #    `gh pr checks` sale en cuanto ve que no hay ninguno, sin esperarlo.
+  #    «No hay checks» tiene dos causas MUY distintas, y hasta el 13-08-2026 las
+  #    dos daban el mismo mensaje —«este repositorio no tiene CI»—, que en welzy
+  #    es falso: tiene `ci.yml`, y lo que pasa es que su `paths-ignore` deja
+  #    fuera las PRs de solo markdown a propósito.
   if grep -qE '^[[:space:]]*pull_request(_target)?[[:space:]]*:' "$raiz"/.github/workflows/*.y*ml 2>/dev/null; then
     hay_workflows=1
   else
     hay_workflows=0
   fi
 
-  # Y si los hay, pueden tardar unos segundos en registrarse: `gh pr checks` sale
-  # en cuanto ve que no hay ninguno, sin esperar a que aparezcan.
+  hay_checks() { printf '%s' "$salida" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; }
+
+  salida=$($GH pr checks "$rama" --json bucket,name,link 2>/dev/null) || true
   if [ "$hay_workflows" = 1 ]; then
     espera=0
-    while ! printf '%s' "$salida" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; do
+    while ! hay_checks; do
       [ "$espera" -ge "${ESPERA_CHECKS:-60}" ] && break
       sleep 5
       espera=$((espera + 5))
-      codigo=0
-      salida=$($GH pr checks "$rama" ${vigilar[@]+"${vigilar[@]}"} --json bucket,name,link 2>/dev/null) || codigo=$?
+      salida=$($GH pr checks "$rama" --json bucket,name,link 2>/dev/null) || true
     done
   fi
 
-  if ! printf '%s' "$salida" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; then
+  if ! hay_checks; then
     if [ "$hay_workflows" = 1 ]; then
       aviso "" \
         "La PR #$numero está abierta. Este repositorio SÍ tiene CI, pero esta PR" \
@@ -152,6 +164,14 @@ esperar_ci() {                          # esperar_ci [--vigilar]
     return 2
   fi
 
+  # 2. Que terminen. Sin `--json`, que es lo único que `--watch` admite; su
+  #    código de salida no decide nada, porque el veredicto lo da el paso 3.
+  if [ "$vigilar" = 1 ]; then
+    $GH pr checks "$rama" --watch --fail-fast >&2 || true
+    salida=$($GH pr checks "$rama" --json bucket,name,link 2>/dev/null) || true
+  fi
+
+  # 3. El veredicto, leído del JSON y solo de ahí.
   malos=$(printf '%s' "$salida" |
     jq -r '.[] | select(.bucket == "fail" or .bucket == "cancel") | "    \(.name)  \(.link)"')
   if [ -n "$malos" ]; then
@@ -159,7 +179,17 @@ esperar_ci() {                          # esperar_ci [--vigilar]
     printf '%s\n' "$malos" >&2
     return 1
   fi
-  [ "$codigo" -eq 0 ] || { aviso "" "El CI terminó con código $codigo."; return 1; }
+
+  # Pendiente no es verde. Se llega aquí si nadie vigiló, o si el `--watch` se
+  # cayó a mitad: dar por bueno un check que aún corre es exactamente el
+  # aprobado sin examen que este guión existe para no dar.
+  corriendo=$(printf '%s' "$salida" |
+    jq -r '.[] | select(.bucket == "pending") | "    \(.name)  \(.link)"')
+  if [ -n "$corriendo" ]; then
+    aviso "" "El CI todavía está corriendo:" ""
+    printf '%s\n' "$corriendo" >&2
+    return 1
+  fi
   return 0
 }
 

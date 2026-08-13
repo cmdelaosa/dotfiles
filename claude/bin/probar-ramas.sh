@@ -65,10 +65,31 @@ case $accion in
     echo "https://example.test/pr/1"
     ;;
   checks)
+    # El `gh` de verdad RECHAZA `--watch` junto a `--json`, y este tiene que
+    # rechazarlo igual: mientras se lo tragaba, la matriz daba verde con
+    # `cerrar-rama.sh` incapaz de fusionar nada —salida vacía leída como «no hay
+    # checks»—. Un doble más permisivo que el original no prueba el original.
+    vigila=0; pide_json=0
+    for bandera in "$@"; do
+      case "$bandera" in
+        --watch) vigila=1 ;;
+        --json)  pide_json=1 ;;
+      esac
+    done
+    if [ "$vigila" = 1 ] && [ "$pide_json" = 1 ]; then
+      echo 'cannot use `--watch` with `--json` flag' >&2
+      exit 1
+    fi
+    # Con `--watch` el de verdad bloquea hasta que terminan y NO imprime JSON;
+    # aquí no hay nada que esperar, así que solo se calla.
+    [ "$vigila" = 1 ] && exit 0
+
     case "${ESCENARIO:-verde}" in
       verde | verde-borra)
              echo '[{"bucket":"pass","name":"CI","link":"https://example.test/1"}]' ;;
       rojo)  echo '[{"bucket":"fail","name":"CI","link":"https://example.test/1"}]'; exit 1 ;;
+      corriendo)
+             echo '[{"bucket":"pending","name":"CI","link":"https://example.test/1"}]' ;;
       *)     exit 1 ;;   # sin checks: gh no imprime JSON ninguno
     esac
     ;;
@@ -266,6 +287,26 @@ d=$(montar); ruta=$(abrir "$d" sin-ci 2>/dev/null); trabajar "$ruta" uno
 afirmar "sin checks: sale bien, pero…"  cerrar sin-checks "$d" sin-ci
 afirmar "…deja el worktree en pie"      hay_worktree "$d" sin-ci
 afirmar "…y la rama sin fusionar"       hay_rama "$d" sin-ci
+
+caso "cerrar-rama.sh: vigilar el CI no puede costar su veredicto"
+# `gh` rechaza `--watch` junto a `--json`. Pedirlos a la vez dejaba la salida
+# VACÍA, o sea un verde de verdad leído como «no ha disparado ningún check»: con
+# eso, `cerrar-rama.sh` no fusionaba nada en ningún repositorio. Se prueba con
+# workflows configurados, que es donde se vigila de verdad y donde la salida
+# vacía además se explicaba sola con lo del `paths-ignore`.
+d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" verde-vigilado 2>/dev/null); trabajar "$ruta" uno
+msg=$(cerrar verde "$d" verde-vigilado 2>&1) && cerrado=0 || cerrado=1
+afirmar "en verde y con CI configurado, fusiona"  test "$cerrado" = 0
+negar   "no lo confunde con «sin checks»"         contiene "paths-ignore" "$msg"
+negar   "no queda worktree"                       hay_worktree "$d" verde-vigilado
+negar   "no queda rama local"                     hay_rama "$d" verde-vigilado
+
+# Y un check que todavía corre tampoco es un aprobado: se llega aquí si el
+# `--watch` se cae a mitad, y dar eso por verde es fusionar sin examen.
+d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" en-curso 2>/dev/null); trabajar "$ruta" uno
+negar   "pendiente: no fusiona"          cerrar corriendo "$d" en-curso
+afirmar "y no ha borrado el worktree"    hay_worktree "$d" en-curso
+afirmar "y no ha borrado la rama"        hay_rama "$d" en-curso
 
 caso "cerrar-rama.sh: «sin checks» no es lo mismo que «sin CI»"
 d=$(montar); ruta=$(abrir "$d" sin-ninguno 2>/dev/null); trabajar "$ruta" uno
