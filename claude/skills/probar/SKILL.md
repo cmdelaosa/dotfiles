@@ -57,6 +57,10 @@ signifique algo.
 ~/.claude/bin/probar-rama.sh <rama>
 ```
 
+**En el repositorio dotfiles, y solo ahí, `./claude/bin/probar-rama.sh <rama>`**:
+`~/.claude/bin` es un enlace al checkout de `main`, así que la otra forma prueba
+el guión de antes de tu cambio.
+
 Vuelve a lanzar `verificar.sh`, comprueba la marca de la revisión, empuja, abre
 la PR si falta, espera al CI y —solo en verde— levanta la pila de esa rama:
 proyecto de Compose propio, puerto propio y **una copia** del volumen de datos

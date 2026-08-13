@@ -58,6 +58,22 @@ Por eso `comprobar.sh` no mira el contenido: mira que **siga siendo un enlace**.
 eso lo llama un hook de `SessionStart`, para que la respuesta llegue sin que nadie
 tenga que acordarse de preguntar.
 
+## Al tocar los guiones de `claude/bin/`
+
+`~/.claude/bin/probar-rama.sh` es un **enlace al checkout de `main`**, así que
+lanzarlo desde un worktree prueba el guión de antes de tu cambio y no el tuyo. Se
+nota poco y engaña mucho: la primera vez que se estrenaron los frenos de
+`verificar.sh` y de la revisión, la PR se abrió sin que ninguno de los dos llegara
+a correr, y por fuera parecía que habían pasado.
+
+Desde una rama de este repositorio, el guión que vale es **el del worktree**:
+
+```bash
+./claude/bin/probar-rama.sh <rama>
+```
+
+Es la misma regla que el `HOOK=` de `probar-git-no-main.sh`, y por el mismo motivo.
+
 ## Al tocar un hook
 
 - Un hook `PreToolUse` que sale con **2 bloquea la herramienta**, y bash sale con 2
