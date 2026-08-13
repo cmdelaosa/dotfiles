@@ -137,11 +137,46 @@ if [ "$solo_limpiar" != 1 ]; then
       codigo=0
       salida=$($GH pr checks "$rama" --watch --fail-fast --json bucket,name,link 2>/dev/null) || codigo=$?
 
+      # «No hay checks» tiene dos causas MUY distintas y hasta el 13-08-2026 las
+      # dos daban el mismo mensaje —«este repositorio no tiene CI»—, que en welzy
+      # es sencillamente falso: tiene `ci.yml`, y lo que pasa es que su
+      # `paths-ignore` deja fuera las PRs de solo markdown a propósito. Un mensaje
+      # que miente sobre por qué no fusiona es peor que no fusionar.
+      if grep -qE '^[[:space:]]*pull_request(_target)?[[:space:]]*:' "$raiz"/.github/workflows/*.y*ml 2>/dev/null; then
+        hay_workflows=1
+      else
+        hay_workflows=0
+      fi
+
+      # Y si los hay, pueden tardar unos segundos en registrarse: `gh pr checks`
+      # sale en cuanto ve que no hay ninguno, sin esperar a que aparezcan, así
+      # que una PR recién abierta puede parecer sin CI durante un instante.
+      if [ "$hay_workflows" = 1 ]; then
+        espera=0
+        while ! printf '%s' "$salida" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; do
+          [ "$espera" -ge "${ESPERA_CHECKS:-60}" ] && break
+          sleep 5
+          espera=$((espera + 5))
+          codigo=0
+          salida=$($GH pr checks "$rama" --watch --fail-fast --json bucket,name,link 2>/dev/null) || codigo=$?
+        done
+      fi
+
       if ! printf '%s' "$salida" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; then
+        if [ "$hay_workflows" = 1 ]; then
+          aviso "" \
+            "La PR #$numero está abierta. Este repositorio SÍ tiene CI, pero esta PR" \
+            "no ha disparado ningún check: lo normal es un \`paths-ignore\` que la deja" \
+            "fuera a propósito —welzy hace eso con las PRs de solo documentación—, y" \
+            "lo que no es normal es que \`ci.yml\` esté roto y no cree ejecuciones." \
+            "" \
+            "Sea lo que sea, «sin checks» no es un aprobado: no la fusiono."
+        else
+          aviso "" \
+            "La PR #$numero está abierta, pero este repositorio no tiene CI." \
+            "«Sin checks» no es un aprobado: no la fusiono."
+        fi
         aviso "" \
-          "La PR #$numero está abierta, pero este repositorio no tiene CI." \
-          "«Sin checks» no es un aprobado: no la fusiono." \
-          "" \
           "Mírala tú y, cuando la fusiones, vuelve con:" \
           "    cerrar-rama.sh $rama --solo-limpiar"
         exit 0

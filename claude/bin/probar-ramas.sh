@@ -122,9 +122,27 @@ abrir() { ( cd "$1/repo" && ESTADO="$1/estado" ESPEJO="$1/espejo" "$bin/abrir-ra
 # se derramaría al caso siguiente.
 cerrar() {
   local esc=$1 d=$2; shift 2
+  # ESPERA_CHECKS=0: sin esto, el caso de «hay workflows pero no aparecen checks»
+  # se comería el minuto de gracia de verdad en cada pasada.
   ( cd "$d/repo" &&
-      ESTADO="$d/estado" ESPEJO="$d/espejo" ESCENARIO="$esc" "$bin/cerrar-rama.sh" "$@" )
+      ESTADO="$d/estado" ESPEJO="$d/espejo" ESCENARIO="$esc" ESPERA_CHECKS=0 \
+      "$bin/cerrar-rama.sh" "$@" )
 }
+
+# Un CI de mentira, para separar «aquí no hay CI» de «aquí hay CI y esta PR no
+# dispara nada», que es lo que hace el `paths-ignore` de welzy con las PRs de
+# solo documentación.
+con_workflow() { # con_workflow <dir>
+  mkdir -p "$1/repo/.github/workflows"
+  printf 'name: CI\non:\n  pull_request:\njobs:\n  x:\n    runs-on: ubuntu-latest\n' \
+    > "$1/repo/.github/workflows/ci.yml"
+  git -C "$1/repo" add -A
+  git -C "$1/repo" commit -qm "ci: workflow de mentira"
+  git -C "$1/repo" push -q origin main
+}
+
+contiene()    { printf '%s' "$2" | grep -qF -- "$1"; }
+no_contiene() { ! printf '%s' "$2" | grep -qF -- "$1"; }
 
 hay_worktree() { [ -d "$1/repo/.claude/worktrees/wt$2" ]; }
 hay_rama()     { git -C "$1/repo" show-ref --quiet --verify "refs/heads/$2"; }
@@ -183,6 +201,22 @@ d=$(montar); ruta=$(abrir "$d" sin-ci 2>/dev/null); trabajar "$ruta" uno
 afirmar "sin checks: sale bien, pero…"  cerrar sin-checks "$d" sin-ci
 afirmar "…deja el worktree en pie"      hay_worktree "$d" sin-ci
 afirmar "…y la rama sin fusionar"       hay_rama "$d" sin-ci
+
+caso "cerrar-rama.sh: «sin checks» no es lo mismo que «sin CI»"
+d=$(montar); ruta=$(abrir "$d" sin-ninguno 2>/dev/null); trabajar "$ruta" uno
+msg=$(cerrar sin-checks "$d" sin-ninguno 2>&1)
+afirmar "sin workflows, dice que el repo no tiene CI" \
+        contiene "este repositorio no tiene CI" "$msg"
+
+# Con CI configurado, «no hay checks» ya no puede explicarse como «no hay CI»:
+# es lo que pasó de verdad en welzy con la PR #107, que solo tocaba markdown.
+d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" con-ci-sin-checks 2>/dev/null); trabajar "$ruta" uno
+msg=$(cerrar sin-checks "$d" con-ci-sin-checks 2>&1)
+afirmar "con workflows, NO dice que el repo no tenga CI" \
+        no_contiene "este repositorio no tiene CI" "$msg"
+afirmar "y nombra el paths-ignore como causa probable" contiene "paths-ignore" "$msg"
+afirmar "tampoco fusiona"                              hay_rama "$d" con-ci-sin-checks
+afirmar "ni borra el worktree"                         hay_worktree "$d" con-ci-sin-checks
 
 caso "cerrar-rama.sh: verde de punta a punta"
 d=$(montar); ruta=$(abrir "$d" verde 2>/dev/null); trabajar "$ruta" uno
