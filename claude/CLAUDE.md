@@ -11,6 +11,27 @@
 - Mid-task, stay quiet unless you're **blocked**, you hit something **that changes the plan**, or you need a **decision**. Then say it in a line or two, not a report.
 - This overrides any default urge to be thorough in prose. Be thorough in the *work*, terse in the *telling*.
 
+### And then explain what you built — this part is not terse
+
+The rules above are about the *journey*, and they work. What they were missing is
+the *result*: a summary of files touched tells me what you did, not what the thing
+now does, and I'm the one who has to use it and try it.
+
+- **Every time you finish, add a plain explanation of the functionality**, after
+  the summary and before what's mine to do. Not what you touched — what it now
+  **does** that it didn't before.
+- **Three things, always**: what changed in behaviour, **where it lives** (the
+  screen, the menu, the command, the endpoint, the file), and **how I try it** —
+  the concrete steps, with the URL, what to type and what I should see. Write it
+  for someone who didn't watch you build it, because by tomorrow that's me.
+- **Brevity does not apply here**, same as it never applied to evidence. Terse
+  about the journey, complete about the result. If the feature needs ten lines to
+  be clear, take ten lines — what it must not have is filler.
+- **If it isn't visible on screen** (a hook, a migration, a refactor), say it in
+  behaviour terms anyway: what would look different, and how I'd notice if it
+  broke.
+- Applies **in every project**, not just the one where it came up *(2026-08-13)*.
+
 ## Branch, PR, merge — never work on main
 
 - **Work never happens on `main`.** Every change — in any repo — starts with `~/.claude/bin/abrir-rama.sh <name-that-says-what-is-inside>`, which opens the branch *and* its worktree and prints the path to enter with `EnterWorktree`. Not a courtesy: on 2026-08-13 three sessions landed in welzy's root at once, one moved HEAD under another, a WIP ended up inside someone else's PR (`5b727d2`, now in main's history) and a `commit` went straight onto `main`. Nobody chose to skip the worktree; opening one was a manual step, and manual steps get skipped. **Do this before touching the first file**, not after the first edit.
