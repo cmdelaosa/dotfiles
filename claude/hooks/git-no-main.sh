@@ -5,6 +5,10 @@
 # los repos de Carlos son privados en el plan gratuito: no hay nada del lado del
 # servidor que pare un push directo a main.
 #
+# Deja pasar la LIMPIEZA de después de fusionar —traer main a su remoto y borrar
+# la rama ya fusionada—, porque nada de eso mete trabajo en main y cobrar una
+# escotilla por ello la convierte en rutina.
+#
 # Escotilla, cuando de verdad haga falta:
 #   CLAUDE_ALLOW_MAIN=1 git push origin main
 # o exportarla para toda la sesión.
@@ -19,17 +23,70 @@ cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null)
 # `git merge-base` es de solo lectura y con `*"git merge"*` lo bloqueaba también.
 printf '%s' "$cmd" | grep -qE '(^|[;&|(]|[[:space:]])git[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?(-[^[:space:]]+[[:space:]]+)*(commit|merge|push)([[:space:]]|$)' || exit 0
 
-# Sincronizar main con su remoto tras fusionar una PR no es "trabajar sobre
-# main": --ff-only solo adelanta el puntero y no puede crear un commit. Sin esta
-# excepción el hook se dispara cada vez que se vuelve de una PR.
-case "$cmd" in *"--ff-only"*) exit 0 ;; esac
+# Espacios normalizados: las excepciones de abajo se comparan con la orden
+# ENTERA, así que no pueden pelearse con el formato — pero tampoco se dejan
+# colar encadenando (`git push origin main && git push origin --delete x`).
+norm=$(printf '%s' "$cmd" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
+
+# Y sin el `-C <ruta>`, para que las excepciones valgan igual desde dentro del
+# repo que desde fuera. A qué repo apunta se resuelve abajo, por separado.
+sin_c=$(printf '%s' "$norm" | sed -E 's#^git -C [^ ]+ #git #')
+
+# Excepción 1 — sincronizar main con SU remoto tras fusionar una PR. Adelantar
+# el puntero hasta lo que ya está en origin no es trabajar sobre main, y sin
+# esto el hook se dispara cada vez que se vuelve de una PR.
+#
+# Ojo a lo que NO entra, que es la fisura que esto cierra: hasta el 2026-08-13
+# valía cualquier orden que contuviera "--ff-only", así que
+# `git merge --ff-only una-rama-local` pasaba y adelantaba main hasta commits
+# que ninguna PR había juzgado. Por eso ahora la lista es cerrada y solo nombra
+# el upstream.
+case "$sin_c" in
+  "git pull --ff-only" | \
+  "git pull --ff-only origin main" | "git pull --ff-only origin master" | \
+  "git pull origin main --ff-only" | "git pull origin master --ff-only" | \
+  "git merge --ff-only origin/main" | "git merge --ff-only origin/master" | \
+  "git merge --ff-only @{u}" | "git merge --ff-only @{upstream}")
+    exit 0 ;;
+esac
+
+# Excepción 2 — borrar en el remoto la rama de una PR ya fusionada. Es limpieza,
+# no un empujón sobre main: `git push origin --delete otra-rama` no toca main ni
+# de lejos, pero el hook saltaba porque la orden empieza por `git push` y HEAD
+# dice main. Eso obligaba a pedir la escotilla para cada limpieza, que es
+# gastarla en lo que no importa — y una escotilla que se pide a diario deja de
+# leerse.
+#
+# Las tres condiciones son el candado: la orden es SOLO ese push (sin encadenar),
+# borra UNA rama, y esa rama no es main ni master. Borrar main en el remoto sigue
+# necesitando la escotilla, que es como tiene que ser.
+if [[ $sin_c =~ ^git\ push\ ([A-Za-z0-9._-]+)\ (--delete|-d)\ ([A-Za-z0-9._/-]+)$ ]]; then
+  case "${BASH_REMATCH[3]}" in
+    main | master) ;;
+    *) exit 0 ;;
+  esac
+fi
 
 # Escotilla: exportada en el entorno, o escrita delante del comando.
 [ "${CLAUDE_ALLOW_MAIN:-}" = "1" ] && exit 0
 case "$cmd" in *CLAUDE_ALLOW_MAIN=1*) exit 0 ;; esac
 
+# La rama que importa es la del repo al que apunta la ORDEN, no la del directorio
+# donde estoy. Hasta el 2026-08-13 esto leía el HEAD del cwd, y con `-C` fallaba
+# por los dos lados: bloqueaba commitear en la rama de OTRO repo solo porque aquí
+# hubiera un main, y —lo grave— dejaba pasar un `git -C otro-repo push origin
+# main` de verdad con solo estar aquí en una rama cualquiera.
+#
+# Limitación conocida: con varias órdenes encadenadas se juzga la primera. Las
+# dos excepciones de arriba ya exigen orden única, así que lo encadenado acaba
+# bloqueado igual.
+destino=.
+if [[ $norm =~ (^|[[:space:]])git[[:space:]]+-C[[:space:]]+([^[:space:]]+) ]]; then
+  destino="${BASH_REMATCH[2]}"
+fi
+
 # Fuera de un repo git no hay nada que proteger.
-branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || exit 0
+branch=$(git -C "$destino" rev-parse --abbrev-ref HEAD 2>/dev/null) || exit 0
 case "$branch" in
   main | master) ;;
   *) exit 0 ;;
@@ -42,6 +99,13 @@ Estás en '$branch'. Los cambios no van sobre main directamente.
   2. commitea ahí
   3. gh pr create   — el CI se corre en la PR
   4. fusiona a main desde la PR, ya en verde
+
+Limpiar después de fusionar SÍ pasa por aquí, no hace falta escotilla:
+  git pull --ff-only                     — traer main a su remoto
+  git push origin --delete <rama>        — borrar la rama fusionada
+  git branch -D <rama>                   — y su copia local
+  git worktree remove <ruta>             — y su worktree
+Cada una suelta, sin encadenar con &&: el hook mira la orden entera.
 
 Si de verdad hace falta tocar main, díselo a Carlos y que lo apruebe él:
   CLAUDE_ALLOW_MAIN=1 $cmd
