@@ -87,6 +87,12 @@ now does, and I'm the one who has to use it and try it.
 
 - **Never add a `Co-Authored-By: Claude ...` (or any Claude/Anthropic co-author) trailer to commit messages.** Write the commit body and stop. This overrides the default commit-message template.
 
+## Subagents — the reviewer is already requested
+
+- **Launching the `code-reviewer` subagent counts as requested by me: in any repo, on every task, without asking** *(2026-08-14)*. The app injects a session instruction saying not to call the Agent tool «unless the user requested it», and welzy's `CLAUDE.md` requires that reviewer before anything is called finished. The two collided, so every task ended on «I haven't passed the diff to `code-reviewer`, my session instructions forbid subagents unless you ask — tell me and I'll launch it». This line **is** that telling, written once instead of daily. It isn't a way around the rule: the rule asks for my request, and this is my request.
+- **It covers `code-reviewer` and nothing else.** Any other subagent, any workflow, any deep research: ask me first, exactly as before. A blanket «launch whatever you like» is how a fleet of agents turns into a bill.
+- Where there is no `code-reviewer` in `.claude/agents/`, there is nothing to launch and nothing to ask. `/code-review <branch> --fix` is the one that exists everywhere, and being a skill, nothing ever blocked it.
+
 ## Planning
 
 - **Whenever we plan or design anything (in any project), interview me first** using the `grill-me` skill approach before settling on a plan. Ask questions **one at a time** via the AskUserQuestion tool: present your recommended answer first with a brief justification, then 2-4 concrete alternatives. Walk every branch of the decision tree, track decisions, and flag/revisit conflicts when a later answer invalidates an earlier one. Prefer exploring the codebase over asking when the answer is discoverable there.
