@@ -24,7 +24,7 @@ sostiene: son dos preguntas distintas y por eso son dos guiones.
 |---|---|
 | `claude/CLAUDE.md` | Las instrucciones globales: cómo informar, ramas y PR, worktrees, planificación |
 | `claude/settings.json` | Modelo, estilo de salida, permisos y **los hooks** |
-| `claude/hooks/git-no-main.sh` | Rechaza `commit`/`merge`/`push` estando en `main`. La protección de rama de GitHub pide plan de pago y estos repositorios son privados en el gratuito: esto es lo único que hay |
+| `claude/hooks/git-no-main.sh` | Rechaza `commit`/`merge`/`push` estando en `main`. En los repositorios privados sigue siendo **lo único que hay**: la protección de rama de GitHub pide plan de pago o repositorio público. Aquí ya no (ver abajo) |
 | `claude/hooks/git-una-sesion-por-checkout.sh` | Rechaza los verbos que mueven árbol o índice cuando hay otra sesión viva en la misma raíz de git, y lo avisa al arrancar |
 | `claude/hooks/dotfiles-al-dia.sh` | Avisa si la máquina y este repositorio han dejado de coincidir |
 | `claude/hooks/probar-*.sh` | Las matrices de los dos hooks bloqueantes (64 y 57 casos) |
@@ -52,6 +52,28 @@ sostiene: son dos preguntas distintas y por eso son dos guiones.
 - Nada con credenciales: las de Claude viven en el llavero de macOS y las de `gh` en
   su propio llavero. **Si algún día aparece un fichero con un token dentro de
   `~/.claude`, no lo enlaces aquí.**
+
+## Este repositorio es público, y no por presumir
+
+Se hizo público el 14-08-2026 porque el CI no arrancaba: los trabajos morían en
+dos segundos sin runner asignado y con los logs vacíos, que es como se ve
+quedarse sin los minutos incluidos de Actions en un repositorio privado del plan
+gratuito. En público son ilimitados, y el mismo commit pasó a verde en 28
+segundos sin tocar una línea del workflow.
+
+Lo segundo vino de regalo y vale más: **`main` tiene protección del lado del
+servidor**, que en privado pedía plan de pago. Hace falta una PR, `verificar.sh`
+tiene que pasar, la rama tiene que estar al día con `main` —el mismo verde
+caducado que `cerrar-rama.sh` ya vigilaba, ahora también desde GitHub—, y no se
+admiten ni `--force` ni borrar `main`. **Con los administradores dentro**: aquí
+`CLAUDE_ALLOW_MAIN=1` ya no compra un push directo, porque el que frena es
+GitHub y no el hook.
+
+Lo que eso expone, dicho claro: el correo de los commits, las rutas
+`/Users/cmo/…` y los nombres de los proyectos privados que se mencionan en los
+comentarios. Ninguna credencial — se comprobó la historia entera antes de
+pulsar el botón, y el criterio de qué no entra aquí sigue estando dos secciones
+más arriba.
 
 ## La trampa
 
