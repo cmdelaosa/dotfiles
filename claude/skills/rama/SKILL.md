@@ -63,7 +63,8 @@ No se pierde nada: esa rama está en el commit de `main` y sin nada encima.
 - No trabajar en la raíz «solo para una cosa rápida». La colisión del 13-08-2026
   fue exactamente una cosa rápida.
 
-Al terminar de programar no se espera a nadie: la cadena de `probar` arranca
+Al terminar **toda** la tarea no se espera a nadie: la cadena de `probar` arranca
 sola — verifica, revisa a `max` en el mejor Opus, commitea los arreglos, empuja
-y deja el CI corriendo; entonces, y no antes, pregunta si además quiere la pila
-local. `cerrar` solo cuando dé el visto bueno.
+y espera al CI; con el CI ya corriendo, y no antes, pregunta si además quiere la
+pila local. No acaba con la pregunta: acaba con la PR verde, o parada y
+enseñando los jobs. `cerrar` solo cuando dé el visto bueno.
