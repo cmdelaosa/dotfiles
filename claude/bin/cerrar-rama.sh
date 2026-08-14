@@ -135,6 +135,31 @@ if $DOCKER compose -p "$proyecto" ps -q >/dev/null 2>&1 &&
   $DOCKER compose -p "$proyecto" down --volumes >&2 || true
 fi
 
+# Y **después del `down`, a mano**, porque `--volumes` no basta: solo se lleva
+# los volúmenes que creó Compose, y el de datos no es suyo. Lo crea
+# `probar-rama.sh` con `docker volume create` antes de levantar nada, que es la
+# única forma de copiarle dentro tus datos antes de que arranque Postgres.
+# Compose lo dice al levantar la pila —«already exists but was not created by
+# Docker Compose»— y al bajarla lo deja donde está.
+#
+# Hasta el 14-08-2026 eso significaba que **cada rama probada dejaba una copia
+# entera de tu base de datos en el disco, para siempre**, mientras este guión
+# decía «tumbo la pila y sus volúmenes de copia». Se vio al cerrar la rama de
+# `verificar.sh`: 208 MB en tres volúmenes de ramas ya cerradas, uno de ellos
+# recién «limpiado». La matriz tampoco lo veía, porque comprobaba que se llamara
+# al `down --volumes`, no que el volumen dejara de existir.
+#
+# Por prefijo y no por el nombre exacto: si la pila gana un segundo volumen
+# mañana, este barrido ya se lo lleva. El `_` del final es lo que impide que
+# `welzy-cartera` se lleve por delante los de `welzy-cartera-en-pestanas`.
+sobrantes=$($DOCKER volume ls -q --filter "name=^${proyecto}_" 2>/dev/null || true)
+if [ -n "$sobrantes" ]; then
+  paso "borro los volúmenes de la copia que Compose no se lleva"
+  printf '%s\n' "$sobrantes" | while IFS= read -r v; do
+    [ -n "$v" ] && $DOCKER volume rm "$v" >&2 || true
+  done
+fi
+
 # ── La limpieza, en el único orden que funciona ─────────────────────────────
 if [ "$hubo_remoto" = 1 ]; then
   git -C "$raiz" fetch origin --quiet --prune

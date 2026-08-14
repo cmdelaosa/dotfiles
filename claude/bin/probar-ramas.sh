@@ -156,6 +156,18 @@ case "$1 ${2:-}" in
       *",$3,"*) exit 0 ;;
       *)        exit 1 ;;
     esac ;;
+  # `volume ls -q --filter name=^<proyecto>_`, que es como cerrar-rama.sh busca
+  # lo que Compose no se lleva. Se responde con los de VOLUMENES que encajan con
+  # ese patrón: si el doble contestara siempre lo mismo, el barrido parecería
+  # correcto aunque se llevara por delante el volumen de la pila de siempre.
+  "volume ls")
+    patron=""
+    for arg in "$@"; do
+      case "$arg" in name=*) patron=${arg#name=} ;; esac
+    done
+    [ -n "$patron" ] || exit 0
+    printf '%s' "${VOLUMENES:-}" | tr ',' '\n' | grep -E -- "$patron" || true
+    exit 0 ;;
 esac
 case "$*" in
   *"ps -aq") echo "contenedor-de-mentira" ;;  # para que el `down` llegue a correr
@@ -251,7 +263,7 @@ cerrar() {
   # se comería el minuto de gracia de verdad en cada pasada.
   ( cd "$d/repo" &&
       ESTADO="$d/estado" ESPEJO="$d/espejo" ESCENARIO="$esc" ESPERA_CHECKS=0 \
-      DESPLIEGUE_FALLA="${DESPLIEGUE_FALLA:-0}" \
+      DESPLIEGUE_FALLA="${DESPLIEGUE_FALLA:-0}" VOLUMENES="${VOLUMENES:-}" \
       "$bin/cerrar-rama.sh" "$@" )
 }
 
@@ -813,9 +825,30 @@ afirmar "ni la rama"                           hay_rama "$d" main-que-no-para
 caso "cerrar-rama.sh: se lleva la pila de la rama, con sus volúmenes"
 d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" con-pila-que-cerrar 2>/dev/null); trabajar "$ruta" uno
+VOLUMENES="repo_postgres-data,repo-con-pila-que-cerrar_postgres-data"
 afirmar "cierra"                            cerrar verde "$d" con-pila-que-cerrar
+log=$(registro "$d" docker.log)
 afirmar "tumbó la pila de la rama con --volumes" \
-        contiene "compose -p repo-con-pila-que-cerrar down --volumes" "$(registro "$d" docker.log)"
+        contiene "compose -p repo-con-pila-que-cerrar down --volumes" "$log"
+# Y el volumen tiene que DESAPARECER, no basta con haber llamado al `down`:
+# `--volumes` solo se lleva lo que creó Compose, y este lo creó probar-rama.sh.
+afirmar "y borra a mano el volumen de la copia, que el down no se lleva" \
+        contiene "volume rm repo-con-pila-que-cerrar_postgres-data" "$log"
+afirmar "TU volumen de siempre no se toca" \
+        no_contiene "volume rm repo_postgres-data" "$log"
+VOLUMENES=""
+
+# El riesgo que introduce barrer por prefijo: dos ramas cuyo nombre empieza igual.
+# El `_` del final del patrón es lo único que separa a una de la otra.
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" cartera 2>/dev/null); trabajar "$ruta" uno
+VOLUMENES="repo-cartera_postgres-data,repo-cartera-en-pestanas_postgres-data"
+afirmar "cierra"                            cerrar verde "$d" cartera
+log=$(registro "$d" docker.log)
+afirmar "borra el suyo"                     contiene "volume rm repo-cartera_postgres-data" "$log"
+afirmar "y NO el de la rama que empieza igual" \
+        no_contiene "volume rm repo-cartera-en-pestanas_postgres-data" "$log"
+VOLUMENES=""
 
 echo
 if [ "$fallos" -eq 0 ]; then
