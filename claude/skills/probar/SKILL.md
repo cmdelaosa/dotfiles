@@ -111,8 +111,9 @@ Con pila, hay que leer la salida **mientras el guión corre**, y eso no ocurre
 solo: `run_in_background` devuelve el control enseguida y solo te despierta **al
 terminar el proceso**, que es doce minutos tarde. Así que **no cierres el turno
 aquí**: sondea la salida (`BashOutput`, o `Monitor` con un bucle `until`) cada
-pocos segundos hasta ver la línea. Sale por **stderr** y con dos espacios
-delante:
+pocos segundos hasta ver la línea. Búscala **por su texto**, «espero al CI de la
+PR #», que es lo único que la matriz fija; sale por stderr y sangrada, así que no
+la ancles al principio de la línea ni al número:
 
 ```
   espero al CI de la PR #12
@@ -194,8 +195,12 @@ avanzar.
 - **«Lista para probar: http://127.0.0.1:…»** → la pila está arriba. Dale la URL
   y para igual. Si venía del paso 4, di también cómo acabó el CI.
 - **«El worktree tiene cambios sin guardar»** → no ha empujado nada. Suele ser lo
-  que descartaste de la revisión y se quedó suelto: revíértelo o commitéalo. El
+  que descartaste de la revisión y se quedó suelto: reviértelo o commitéalo. El
   `--forzar` que ofrece tira esos cambios, y es del usuario.
+- **«no tiene ningún commit que origin/main no tenga»** (o «no tiene remoto») →
+  no hay nada que empujar y no hay PR que abrir. Con la cadena automática es más
+  fácil de lo que parece: se dispara sobre una rama ya fusionada o todavía
+  vacía. No lo arregles a base de commits: dilo y para.
 - **«verificar.sh ha fallado»** → no ha empujado nada. Arréglalo en el worktree,
   commitea, **vuelve a revisar y a marcar** (la marca ha caducado con ese commit)
   y relánzalo.
@@ -213,11 +218,14 @@ avanzar.
 - **«La pila no responde»** → pásale al usuario la salida de
   `docker compose -p <proyecto> logs`.
 
-**Casi todas avisan por el sistema**, así que el usuario se entera sin estar
-mirando el terminal. Las que **no**: la señal del paso 4 y los tres frenos de
-antes del push —árbol sucio, `verificar.sh` rojo y diff sin revisar—, que salen
-por `morir` y no suenan. Justo los casos en que la cadena se para sin haber
-empujado nada, así que **esos hay que contarlos tú**, y no darlos por avisados.
+**Las despedidas avisan por el sistema**, así que el usuario se entera sin estar
+mirando el terminal. Lo que **no** suena sale todo por `morir`, y son dos
+grupos: los cuatro frenos de antes del push —árbol sucio, nada que empujar,
+`verificar.sh` rojo y diff sin revisar— y dos abortos de después de empujar —la
+PR ya cerrada, y quedarse sin puerto libre al levantar la pila—. Ahí la cadena
+se para en silencio, así que **esos hay que contarlos tú**, y no darlos por
+avisados. La señal del paso 4 tampoco suena: es de mitad de camino, y por eso
+hay que sondearla.
 
 ## Lo que hay que tener claro
 

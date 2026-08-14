@@ -19,10 +19,13 @@
 # mientras el CI quema sus minutos, para que la respuesta no cueste esperar.
 # Aquí abajo solo hay banderas; el guión no pregunta nada por su cuenta, porque
 # casi siempre corre en segundo plano y una pregunta ahí no la lee nadie. Por lo
-# mismo, **los finales avisan por el sistema**: si el final normal ya no es una
-# pila levantada, tampoco puede serlo el único momento en que suena algo. Los
-# frenos de ANTES del push (árbol sucio, verificar.sh rojo, diff sin revisar)
-# mueren en lib-ramas.sh sin sonar; contarlos es de la skill.
+# mismo, **las despedidas avisan por el sistema**: si el final normal ya no es
+# una pila levantada, tampoco puede serlo el único momento en que suena algo.
+# Lo que NO suena es lo que sale por `morir`, y son dos grupos: los CUATRO
+# frenos de antes del push (árbol sucio, nada que empujar, verificar.sh rojo,
+# diff sin revisar), que mueren en lib-ramas.sh, y dos abortos de después de
+# empujar (la PR ya cerrada, y quedarse sin puerto libre al levantar la pila).
+# Contarlos es de la skill.
 #
 # **No fusiona nada.** Esa es toda la idea: hasta el 13-08-2026 `cerrar-rama.sh`
 # fusionaba sola en cuanto el CI se ponía verde, y eso deja fuera lo único que el
