@@ -156,6 +156,23 @@ case "$1 ${2:-}" in
       *",$3,"*) exit 0 ;;
       *)        exit 1 ;;
     esac ;;
+  # `volume ls -q --filter name=^<proyecto>_`, que es como cerrar-rama.sh busca
+  # lo que Compose no se lleva. Se responde con los de VOLUMENES que encajan con
+  # ese patrón: si el doble contestara siempre lo mismo, el barrido parecería
+  # correcto aunque se llevara por delante el volumen de la pila de siempre.
+  "volume ls")
+    patron=""
+    for arg in "$@"; do
+      case "$arg" in name=*) patron=${arg#name=} ;; esac
+    done
+    [ -n "$patron" ] || exit 0
+    printf '%s' "${VOLUMENES:-}" | tr ',' '\n' | grep -E -- "$patron" || true
+    exit 0 ;;
+  # Un volumen que no se deja borrar —lo normal es que algo lo tenga cogido—,
+  # para poder comprobar que eso se dice en vez de darse por hecho.
+  "volume rm")
+    [ "${VOLUMEN_ATASCADO:-0}" = 1 ] && exit 1
+    exit 0 ;;
 esac
 case "$*" in
   *"ps -aq")
@@ -274,8 +291,8 @@ cerrar() {
   # se comería el minuto de gracia de verdad en cada pasada.
   ( cd "$d/repo" &&
       ESTADO="$d/estado" ESPEJO="$d/espejo" ESCENARIO="$esc" ESPERA_CHECKS=0 \
-      DESPLIEGUE_FALLA="${DESPLIEGUE_FALLA:-0}" \
-      VOLUMENES="${VOLUMENES:-}" PILAS="${PILAS:-}" \
+      DESPLIEGUE_FALLA="${DESPLIEGUE_FALLA:-0}" VOLUMENES="${VOLUMENES:-}" \
+      VOLUMEN_ATASCADO="${VOLUMEN_ATASCADO:-0}" PILAS="${PILAS:-}" \
       "$bin/cerrar-rama.sh" "$@" )
 }
 
@@ -985,26 +1002,48 @@ caso "cerrar-rama.sh: se lleva la pila de la rama, con sus volúmenes"
 d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" con-pila-que-cerrar 2>/dev/null); trabajar "$ruta" uno
 PILAS="repo-con-pila-que-cerrar"
+VOLUMENES="repo_postgres-data,repo-con-pila-que-cerrar_postgres-data"
 msg=$(cerrar verde "$d" con-pila-que-cerrar 2>&1) && cerro=0 || cerro=1
 PILAS=""
 afirmar "cierra"                            test "$cerro" = 0
+log=$(registro "$d" docker.log)
 afirmar "tumbó la pila de la rama con --volumes" \
-        contiene "compose -p repo-con-pila-que-cerrar down --volumes" "$(registro "$d" docker.log)"
+        contiene "compose -p repo-con-pila-que-cerrar down --volumes" "$log"
+# Y el volumen tiene que DESAPARECER, no basta con haber llamado al `down`:
+# `--volumes` solo se lleva lo que creó Compose, y este lo creó probar-rama.sh.
+afirmar "y borra a mano el volumen de la copia, que el down no se lleva" \
+        contiene "volume rm repo-con-pila-que-cerrar_postgres-data" "$log"
+afirmar "TU volumen de siempre no se toca" \
+        no_contiene "volume rm repo_postgres-data" "$log"
 afirmar "y lo dice"                         contiene "sin pila" "$msg"
-
-# Un volumen suelto —los contenedores se fueron sin él— también se recoge: es
-# una COPIA de los datos del usuario, y desde `--solo-pila` puede quedarse ahí
-# sin que nadie lo tumbe. Y si nunca hubo pila, no se presume una limpieza que
-# no ha ocurrido.
-d=$(montar); con_workflow "$d"; con_compose "$d"
-ruta=$(abrir "$d" volumen-suelto 2>/dev/null); trabajar "$ruta" uno
-revisar "$d" volumen-suelto >/dev/null 2>&1
-VOLUMENES="repo-volumen-suelto_postgres-data"
-afirmar "cierra"                            cerrar verde "$d" volumen-suelto
-afirmar "y borra el volumen que quedó suelto" \
-        contiene "volume rm repo-volumen-suelto_postgres-data" "$(registro "$d" docker.log)"
 VOLUMENES=""
 
+# El riesgo que introduce barrer por prefijo: dos ramas cuyo nombre empieza igual.
+# El `_` del final del patrón es lo único que separa a una de la otra.
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" cartera 2>/dev/null); trabajar "$ruta" uno
+VOLUMENES="repo-cartera_postgres-data,repo-cartera-en-pestanas_postgres-data"
+afirmar "cierra"                            cerrar verde "$d" cartera
+log=$(registro "$d" docker.log)
+afirmar "borra el suyo"                     contiene "volume rm repo-cartera_postgres-data" "$log"
+afirmar "y NO el de la rama que empieza igual" \
+        no_contiene "volume rm repo-cartera-en-pestanas_postgres-data" "$log"
+VOLUMENES=""
+
+# Y si el volumen no se deja borrar, se dice. Dar el borrado por hecho es el
+# mismo fallo que este barrido arregla, un piso más abajo.
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" volumen-atascado 2>/dev/null); trabajar "$ruta" uno
+VOLUMENES="repo-volumen-atascado_postgres-data"; VOLUMEN_ATASCADO=1
+msg=$(cerrar verde "$d" volumen-atascado 2>&1)
+negar   "cierra igual: la fusión ya ocurrió"  hay_rama "$d" volumen-atascado
+afirmar "pero avisa de que el volumen sigue ahí" \
+        contiene "no he podido borrar el volumen repo-volumen-atascado_postgres-data" "$msg"
+VOLUMENES=""; VOLUMEN_ATASCADO=0
+
+# Y donde nunca hubo pila —lo normal desde que levantarla se pide— no se presume
+# una limpieza que no ha ocurrido: `ps -aq` no ve contenedores, el barrido no ve
+# volúmenes, y el mensaje final tiene que decirlo en vez de cantar «sin pila».
 d=$(montar); con_workflow "$d"
 ruta=$(abrir "$d" nunca-hubo-pila 2>/dev/null); trabajar "$ruta" uno
 revisar "$d" nunca-hubo-pila >/dev/null 2>&1

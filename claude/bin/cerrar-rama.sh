@@ -130,7 +130,6 @@ fi
 # Con sus volúmenes: son una copia desechable que hizo probar-rama.sh. El
 # volumen de tu pila de siempre nunca se toca — tiene otro nombre de proyecto.
 proyecto=$(proyecto_de_rama)
-volumen_rama="${proyecto}_postgres-data"
 hubo_pila=0
 if $DOCKER compose -p "$proyecto" ps -q >/dev/null 2>&1 &&
    [ -n "$($DOCKER compose -p "$proyecto" ps -aq 2>/dev/null)" ]; then
@@ -139,15 +138,53 @@ if $DOCKER compose -p "$proyecto" ps -q >/dev/null 2>&1 &&
   hubo_pila=1
 fi
 
-# Los contenedores se pueden haber ido sin llevarse el volumen —un `down` a
-# secas, o un `up --build` que se cayó construyendo—, y entonces `ps -aq` no ve
-# nada y la COPIA de tus datos se queda ahí para siempre, sin que ningún comando
-# de este instrumental la recoja. Desde que la pila se levanta con `--solo-pila`,
-# sin CI de por medio, ese estado dejó de ser raro.
-if $DOCKER volume inspect "$volumen_rama" >/dev/null 2>&1; then
-  paso "y el volumen $volumen_rama, que se había quedado suelto"
-  $DOCKER volume rm "$volumen_rama" >/dev/null 2>&1 || true
+# El barrido de abajo va aparte del `down` a propósito, y no solo porque Compose
+# no se lleve lo que no creó: los contenedores se pueden haber ido sin el volumen
+# —un `down` a secas, un `up --build` que se cayó construyendo— y entonces
+# `ps -aq` no ve nada y el bloque de arriba ni corre. Desde que la pila se levanta
+# con `--solo-pila`, sin CI de por medio, ese estado dejó de ser raro.
+#
+# Y **después del `down`, a mano**, porque `--volumes` no basta: solo se lleva
+# los volúmenes que creó Compose, y el de datos no es suyo. Lo crea
+# `probar-rama.sh` con `docker volume create` antes de levantar nada, que es la
+# única forma de copiarle dentro tus datos antes de que arranque Postgres.
+# Compose lo dice al levantar la pila —«already exists but was not created by
+# Docker Compose»— y al bajarla lo deja donde está.
+#
+# Hasta el 14-08-2026 eso significaba que **cada rama probada dejaba una copia
+# entera de tu base de datos en el disco, para siempre**, mientras este guión
+# decía «tumbo la pila y sus volúmenes de copia». Se vio al cerrar la rama de
+# `verificar.sh`: 208 MB en tres volúmenes de ramas ya cerradas, uno de ellos
+# recién «limpiado». La matriz tampoco lo veía, porque comprobaba que se llamara
+# al `down --volumes`, no que el volumen dejara de existir.
+#
+# Por prefijo y no por el nombre exacto: si la pila gana un segundo volumen
+# mañana, este barrido ya se lo lleva. El `_` del final es lo que impide que
+# `welzy-cartera` se lleve por delante los de `welzy-cartera-en-pestanas`, y el
+# ancla `^` que un nombre de rama se cuele en medio de otro.
+#
+# Que el filtro de Docker entiende expresiones regulares y no solo subcadenas
+# está comprobado contra el Docker de verdad, no solo contra el doble de la
+# matriz —que es donde esto se habría quedado en verde diciendo mentiras—:
+#
+#     docker volume ls -q --filter name=^welzy-cartera_   → (vacío)
+#     docker volume ls -q --filter name=^welzy_           → welzy_postgres-data
+#
+# El nombre del proyecto no puede traer metacaracteres: `proyecto_de_rama` lo
+# pasa por un `tr -cd '[:alnum:]-'`.
+sobrantes=$($DOCKER volume ls -q --filter "name=^${proyecto}_" 2>/dev/null || true)
+if [ -n "$sobrantes" ]; then
   hubo_pila=1
+  paso "borro los volúmenes de copia que el down no se lleva"
+  # Y si alguno no se deja borrar se dice, en vez de dar el paso por hecho: un
+  # `|| true` aquí sería otra vez el mismo fallo que este cambio arregla —
+  # anunciar una limpieza que no ha ocurrido—, solo que un piso más abajo.
+  printf '%s\n' "$sobrantes" | while IFS= read -r v; do
+    [ -n "$v" ] || continue
+    $DOCKER volume rm "$v" >&2 ||
+      aviso "OJO: no he podido borrar el volumen $v, que sigue ocupando disco." \
+            "    docker volume rm $v"
+  done
 fi
 
 # ── La limpieza, en el único orden que funciona ─────────────────────────────
