@@ -36,6 +36,7 @@ sostiene: son dos preguntas distintas y por eso son dos guiones.
 | `claude/bin/probar-ramas.sh` | La matriz de los cuatro (145 casos), con GitHub, Docker, curl y nc de mentira |
 | `claude/skills/` | `rama`, `probar`, `cerrar` (el flujo de ramas), más `despliega`, `grill-me` y `new-project` |
 | `verificar.sh` | Sintaxis de todos los guiones y las tres matrices. Lo lanza `probar-rama.sh` antes de empujar, así que un error se ve aquí y no doce minutos después en el CI |
+| `.github/workflows/ci.yml` | Un trabajo, y es **este mismo `verificar.sh`**. El verde de la PR y el de tu portátil son la misma pregunta, no dos listas que se desincronizan |
 | `claude/output-styles/concise.md` | El estilo que referencia `settings.json`; sin él, la referencia queda coja |
 | `claude/templates/project/` | El esqueleto que usa el skill `new-project` |
 
@@ -80,8 +81,18 @@ tenga que acordarse de preguntar.
   primera vez que se estrenaron los frenos de `verificar.sh` y de la revisión, la PR
   se abrió sin que ninguno de los dos llegara a correr y por fuera no se notaba nada.
 - **`./verificar.sh` lo lanza todo**: `/bin/bash -n` sobre cada guión y las tres
-  matrices. Es también lo que `probar-rama.sh` ejecuta antes de empujar, así que un
-  fallo aquí es un push que no ocurre.
+  matrices. Es también lo que `probar-rama.sh` ejecuta antes de empujar y lo único
+  que corre el CI, así que un fallo aquí es un push que no ocurre y una PR que no
+  se fusiona.
+- **El CI corre en Ubuntu, y eso no es gratis del todo**: `/bin/bash` allí es un
+  5.x, no el 3.2 de Apple, así que la comprobación de sintaxis pilla lo de siempre
+  pero no lo específico del 3.2 — eso solo lo ve `./verificar.sh` lanzado en el Mac,
+  y el propio guión avisa de en cuál está. A cambio, correrlo en Linux encontró algo
+  que en macOS no se veía: el hook leía la fecha de las transcripciones con
+  `stat -f %m || stat -c %m`, y resulta que en GNU `-f` **no falla** —es «estado del
+  sistema de ficheros»— y `%m` es el punto de montaje. Fuera de macOS el hook dejaba
+  pasar lo que existe para frenar. Ahora es `date -r <fichero> +%s`, que significa lo
+  mismo en los dos.
 - Un hook `PreToolUse` que sale con **2 bloquea la herramienta**, y bash sale con 2
   ante un error de sintaxis: una errata aquí bloquea todo git. **`/bin/bash -n` antes
   de commitear**, y con `/bin/bash` (el 3.2 de Apple), no con el de Homebrew: el 3.2

@@ -23,7 +23,19 @@ titulo() { printf '\n=== %s ===\n' "$1"; }
 # paréntesis de apertura en el patrón se lo traga el 5.x y lo rechaza el 3.2 —y
 # un hook PreToolUse con un error de sintaxis sale con 2, que significa
 # «bloqueado»: una errata aquí bloquea todo git en todas las sesiones.
-titulo "sintaxis de todos los .sh (bash 3.2, el de los hooks)"
+titulo "sintaxis de todos los .sh ($(/bin/bash --version | head -1 | sed 's/.*version \([^ (]*\).*/\1/'))"
+# Y si el /bin/bash de aquí no es el 3.2 —en el CI de GitHub es un 5.x de
+# Ubuntu—, se dice, porque entonces esta sección comprueba menos de lo que su
+# título promete: pilla los errores de sintaxis de siempre, pero no los que solo
+# el 3.2 rechaza, que son justo los que bloquean git en esta máquina.
+case "$(/bin/bash --version | head -1)" in
+  *"version 3.2"*) ;;
+  # Un printf, y no dos argumentos: sin `%s` en el formato, el segundo se cae
+  # sin decir nada y el aviso salía cortado a mitad de frase.
+  *) printf '%s\n%s\n' \
+       '  (ojo: aquí /bin/bash no es el 3.2 de Apple, que es quien ejecuta los hooks:' \
+       '   lo específico de esa versión solo lo ve esta comprobación lanzada en el Mac)' ;;
+esac
 mirados=0
 while IFS= read -r guion; do
   mirados=$((mirados + 1))

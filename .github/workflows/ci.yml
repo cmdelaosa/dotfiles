@@ -1,0 +1,48 @@
+name: CI
+
+# Un solo trabajo, que es el mismo `./verificar.sh` que corre en local antes de
+# empujar. Que sean el mismo guión y no dos listas es todo el diseño: una lista
+# repetida se desincroniza al primer cambio, y entonces el verde de aquí y el de
+# la máquina dejan de significar lo mismo sin que nadie se entere.
+#
+# Solo en `pull_request`. Un push a `main` es la fusión de una PR que este mismo
+# workflow acaba de aprobar, así que añadir `push` sería correr la suite dos
+# veces sobre el mismo árbol — el gasto que welzy ya se quitó de encima. La
+# consecuencia, dicha en voz alta: **un push directo a main no lo comprueba
+# nadie**, y lo que lo impide es el hook `git-no-main.sh` de este repositorio.
+#
+# SIN `paths-ignore`, y a propósito, al revés que welzy. Aquí una PR de solo
+# markdown no dispararía nada, y «sin checks» es exactamente lo que
+# `cerrar-rama.sh` se niega a fusionar: la rama se quedaría abierta esperando a
+# que alguien la fusione a mano. Con el trabajo en un par de minutos, que toda PR
+# tenga veredicto vale más que los minutos que ahorraría saltárselo.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+# Empujar otra vez a la misma rama invalida la ejecución anterior: comprueba el
+# mismo ref y sobra. La cuota de este plan se agotó dos veces en agosto de 2026.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verificar:
+    name: verificar.sh
+    runs-on: ubuntu-latest
+    # Las tres matrices tardan minuto y medio en un portátil. Diez es margen de
+    # sobra y a la vez un tope para que un `sleep` mal puesto no se coma la cuota.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      # `jq`, `git`, `curl` y `nc` ya vienen en el runner, y las matrices falsean
+      # `gh`, `docker` y el avisador, así que no hace falta instalar nada.
+      #
+      # Lo que aquí NO se comprueba, y conviene saberlo antes de fiarse del
+      # verde: `/bin/bash` en Ubuntu es un 5.x, y los hooks los ejecuta el 3.2 de
+      # Apple, que acepta menos cosas. `verificar.sh` lo dice al arrancar. Esa
+      # comprobación entera solo vale lanzada en el Mac; correrla también aquí
+      # cuesta cero y pilla los errores de sintaxis de toda la vida.
+      - run: ./verificar.sh
