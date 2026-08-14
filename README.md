@@ -28,10 +28,10 @@ sigue viniendo de aquí.
 | `claude/hooks/dotfiles-al-dia.sh` | Avisa si la máquina y este repositorio han dejado de coincidir |
 | `claude/hooks/probar-*.sh` | Las matrices de los dos hooks bloqueantes (64 y 57 casos) |
 | `claude/bin/abrir-rama.sh` | Abre la rama **y** su worktree `wt<rama>` desde `origin/<principal>` recién traído, y rechaza los nombres que no dicen nada |
-| `claude/bin/probar-rama.sh` | Empuja, abre la PR, espera al CI y —solo en verde— levanta la pila local de esa rama con una **copia** de los datos. No fusiona nunca |
+| `claude/bin/probar-rama.sh` | Empuja, abre la PR y espera al CI. No fusiona nunca, y **no levanta nada** si no se pide: con `--con-pila` (o `--solo-pila` después) monta la pila local de esa rama con una **copia** de los datos |
 | `claude/bin/cerrar-rama.sh` | Recomprueba el verde, comprueba que no es anterior al `main` de ahora, fusiona, despliega si el repo tiene el contrato de cmdlo, y limpia pila, worktree y las dos ramas |
 | `claude/bin/lib-ramas.sh` | Lo que comparten los dos anteriores: resolver el repo, los frenos, el CI, la pila |
-| `claude/bin/probar-ramas.sh` | La matriz de los tres (121 casos), con GitHub, Docker, curl y nc de mentira |
+| `claude/bin/probar-ramas.sh` | La matriz de los tres (132 casos), con GitHub, Docker, curl y nc de mentira |
 | `claude/skills/` | `rama`, `probar`, `cerrar` (el flujo de ramas), más `despliega`, `grill-me` y `new-project` |
 | `claude/output-styles/concise.md` | El estilo que referencia `settings.json`; sin él, la referencia queda coja |
 | `claude/templates/project/` | El esqueleto que usa el skill `new-project` |
@@ -87,7 +87,7 @@ cualquier sitio y no toca nada de verdad. Lo que eso deja fuera, y hay que proba
 mano de vez en cuando **en welzy**, que es el único repositorio con pila:
 
 ```bash
-~/.claude/bin/probar-rama.sh <una-rama-de-verdad>
+~/.claude/bin/probar-rama.sh <una-rama-de-verdad> --con-pila
 ```
 
 Y comprobar con los ojos: que `docker volume ls` enseña un `<repo>-<rama>_postgres-data`

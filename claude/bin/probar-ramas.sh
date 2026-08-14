@@ -511,24 +511,50 @@ afirmar "y la rama sigue SIN fusionar"      hay_rama "$d" en-pruebas
 afirmar "y su worktree sigue en pie"        hay_worktree "$d" en-pruebas
 afirmar "y la rama remota sigue viva"       hay_remota "$d" en-pruebas
 
-caso "probar-rama.sh: sin verde no levanta nada"
+caso "probar-rama.sh: la pila NO se levanta sola"
+# Levantar una pila construye imágenes, clona el volumen de datos y ocupa un
+# puerto. Hasta el 14-08-2026 pasaba solo, en cada verde, mirase el usuario la
+# rama o no. Ahora se pide, y el defecto es no tocar nada.
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" sin-pedirla 2>/dev/null); trabajar "$ruta" uno
+msg=$(probar_rama verde "$d" sin-pedirla 2>&1) && salio=0 || salio=1
+afirmar "sin banderas sale bien"            test "$salio" = 0
+afirmar "y no levanta absolutamente nada"   test -z "$(registro "$d" docker.log)"
+afirmar "da la URL de la PR"                contiene "La PR está esperando" "$msg"
+afirmar "y dice cómo levantarla luego"      contiene "probar-rama.sh sin-pedirla --solo-pila" "$msg"
+afirmar "la rama sigue sin fusionar"        hay_rama "$d" sin-pedirla
+
+caso "probar-rama.sh: sin verde no levanta nada, aunque se pida"
 d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" rojo-no-levanta 2>/dev/null); trabajar "$ruta" uno
-negar   "CI en rojo: sale con error"        probar_rama rojo "$d" rojo-no-levanta
+negar   "CI en rojo: sale con error"        probar_rama rojo "$d" rojo-no-levanta --con-pila
 afirmar "y no ha levantado ninguna pila"    no_contiene "up -d --build" "$(registro "$d" docker.log)"
 
 d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" sin-checks-no-levanta 2>/dev/null); trabajar "$ruta" uno
-afirmar "sin checks: sale bien…"            probar_rama sin-checks "$d" sin-checks-no-levanta
+afirmar "sin checks: sale bien…"            probar_rama sin-checks "$d" sin-checks-no-levanta --con-pila
 afirmar "…pero tampoco levanta nada"        no_contiene "up -d --build" "$(registro "$d" docker.log)"
 
-caso "probar-rama.sh: en verde, levanta la pila de LA RAMA"
+caso "probar-rama.sh: con --con-pila y en verde, levanta la de LA RAMA"
 d=$(montar); con_workflow "$d"; con_compose "$d"
-ruta=$(abrir "$d" con-pila 2>/dev/null); trabajar "$ruta" uno
-negar   "sin nadie escuchando, acaba diciéndolo" probar_rama verde "$d" con-pila
+ruta=$(abrir "$d" pila-pedida 2>/dev/null); trabajar "$ruta" uno
+negar   "sin nadie escuchando, acaba diciéndolo" probar_rama verde "$d" pila-pedida --con-pila
 log=$(registro "$d" docker.log)
-afirmar "levantó un proyecto propio, no el de siempre" contiene "compose -p repo-con-pila up -d --build" "$log"
-afirmar "y la rama sigue sin fusionar"      hay_rama "$d" con-pila
+afirmar "levantó un proyecto propio, no el de siempre" contiene "compose -p repo-pila-pedida up -d --build" "$log"
+afirmar "y la rama sigue sin fusionar"      hay_rama "$d" pila-pedida
+
+caso "probar-rama.sh: --solo-pila levanta y no toca nada más"
+# El camino de «dije que no y he cambiado de idea». Lo caro de ese camino sería
+# volver a empujar, reabrir la PR y esperar un CI que ya pasó hace diez minutos.
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" me-lo-he-pensado 2>/dev/null); trabajar "$ruta" uno
+RESPONDE=1
+msg=$(probar_rama rojo "$d" me-lo-he-pensado --solo-pila 2>&1) && solo=0 || solo=1
+RESPONDE=0
+afirmar "sale bien aunque el CI esté en rojo"  test "$solo" = 0
+afirmar "levanta la pila"                      contiene "compose -p repo-me-lo-he-pensado up -d --build" "$(registro "$d" docker.log)"
+afirmar "y da la URL de la pila"               contiene "Lista para probar:  http://127.0.0.1:" "$msg"
+negar   "no empuja la rama"                    hay_remota "$d" me-lo-he-pensado
 
 caso "probar-rama.sh: los datos de la rama son una COPIA de los tuyos"
 # Lo único de todo esto que puede destruir datos. Hasta el 13-08-2026 el docker
@@ -537,7 +563,7 @@ caso "probar-rama.sh: los datos de la rama son una COPIA de los tuyos"
 d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" clona-el-volumen 2>/dev/null); trabajar "$ruta" uno
 VOLUMENES="repo_postgres-data"; RESPONDE=1
-afirmar "con la pila arriba, sale bien"     probar_rama verde "$d" clona-el-volumen
+afirmar "con la pila arriba, sale bien"     probar_rama verde "$d" clona-el-volumen --con-pila
 log=$(registro "$d" docker.log)
 afirmar "crea el volumen de LA RAMA" \
         contiene "volume create repo-clona-el-volumen_postgres-data" "$log"
@@ -550,7 +576,7 @@ VOLUMENES=""; RESPONDE=0
 d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" ya-tenia-datos 2>/dev/null); trabajar "$ruta" uno
 VOLUMENES="repo_postgres-data,repo-ya-tenia-datos_postgres-data"; RESPONDE=1
-afirmar "si la rama ya tenía datos, sale bien"  probar_rama verde "$d" ya-tenia-datos
+afirmar "si la rama ya tenía datos, sale bien"  probar_rama verde "$d" ya-tenia-datos --con-pila
 log=$(registro "$d" docker.log)
 afirmar "…y no los pisa: ni crea"           no_contiene "volume create" "$log"
 afirmar "…ni vuelve a copiar"               no_contiene "run --rm" "$log"
@@ -563,7 +589,7 @@ caso "probar-rama.sh: cuando la pila responde, avisa y da la URL"
 d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" pila-viva 2>/dev/null); trabajar "$ruta" uno
 RESPONDE=1
-msg=$(probar_rama verde "$d" pila-viva 2>&1) && vivo=0 || vivo=1
+msg=$(probar_rama verde "$d" pila-viva --con-pila 2>&1) && vivo=0 || vivo=1
 afirmar "sale bien"                          test "$vivo" = 0
 afirmar "dice dónde probarlo"                contiene "Lista para probar:  http://127.0.0.1:" "$msg"
 afirmar "recuerda que los datos son una copia" contiene "tu pila de siempre no se ha tocado" "$msg"
@@ -582,7 +608,7 @@ d=$(montar); con_workflow "$d"; con_compose "$d"
 printf 'CLAVE=secreta\n' > "$d/repo/.env"
 ruta=$(abrir "$d" con-env 2>/dev/null); trabajar "$ruta" uno
 RESPONDE=1
-probar_rama verde "$d" con-env >/dev/null 2>&1
+probar_rama verde "$d" con-env --con-pila >/dev/null 2>&1
 afirmar "el worktree acaba teniendo su .env"  test -L "$ruta/.env"
 afirmar "y es un enlace al de la raíz"        test "$(readlink "$ruta/.env")" = "$d/repo/.env"
 RESPONDE=0
@@ -591,7 +617,7 @@ caso "probar-rama.sh: el puerto sale del nombre de la rama"
 d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" puerto-propio 2>/dev/null); trabajar "$ruta" uno
 RESPONDE=1
-probar_rama verde "$d" puerto-propio >/dev/null 2>&1
+probar_rama verde "$d" puerto-propio --con-pila >/dev/null 2>&1
 afirmar "usa el puerto que le toca a esta rama" \
         contiene "WEB_BIND_PORT=$(puerto_esperado puerto-propio) " "$(registro "$d" docker.log)"
 RESPONDE=0
@@ -599,23 +625,33 @@ RESPONDE=0
 d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" puerto-pillado 2>/dev/null); trabajar "$ruta" uno
 RESPONDE=1; PUERTOS_PILLADOS=3
-probar_rama verde "$d" puerto-pillado >/dev/null 2>&1
+probar_rama verde "$d" puerto-pillado --con-pila >/dev/null 2>&1
 afirmar "si está ocupado, se corre al siguiente libre" \
         contiene "WEB_BIND_PORT=$(( $(puerto_esperado puerto-pillado) + 3 )) " "$(registro "$d" docker.log)"
 RESPONDE=0; PUERTOS_PILLADOS=0
 
-caso "probar-rama.sh: --sin-ci, --sin-pila y el árbol sucio"
+caso "probar-rama.sh: --sin-ci y el árbol sucio"
 d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" sin-esperar 2>/dev/null); trabajar "$ruta" uno
 RESPONDE=1
-afirmar "--sin-ci levanta la pila con el CI en rojo" probar_rama rojo "$d" sin-esperar --sin-ci
+afirmar "--sin-ci --con-pila levanta con el CI en rojo" \
+        probar_rama rojo "$d" sin-esperar --sin-ci --con-pila
 afirmar "…y la levanta de verdad"           contiene "up -d --build" "$(registro "$d" docker.log)"
 RESPONDE=0
 
+# Sin pila, `--sin-ci` sigue siendo lo que dice: empuja, abre la PR y no espera.
 d=$(montar); con_workflow "$d"; con_compose "$d"
-ruta=$(abrir "$d" solo-la-pr 2>/dev/null); trabajar "$ruta" uno
-afirmar "--sin-pila abre la PR y para"      probar_rama verde "$d" solo-la-pr --sin-pila
-afirmar "y no levanta nada"                 test -z "$(registro "$d" docker.log)"
+ruta=$(abrir "$d" sin-esperar-ni-pila 2>/dev/null); trabajar "$ruta" uno
+afirmar "--sin-ci a secas abre la PR y para" probar_rama rojo "$d" sin-esperar-ni-pila --sin-ci
+afirmar "y no levanta nada"                  test -z "$(registro "$d" docker.log)"
+afirmar "pero sí ha empujado"                hay_remota "$d" sin-esperar-ni-pila
+
+# La bandera vieja tenía que desaparecer, no volverse un adorno que se traga:
+# `--sin-pila` era el nombre de lo que ahora es el defecto, y aceptarlo callando
+# haría creer que existe una forma de pedir lo contrario.
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" bandera-vieja 2>/dev/null); trabajar "$ruta" uno
+negar "--sin-pila ya no existe, y lo dice"  probar_rama verde "$d" bandera-vieja --sin-pila
 
 d=$(montar); con_workflow "$d"
 ruta=$(abrir "$d" sucia-al-probar 2>/dev/null); trabajar "$ruta" uno
