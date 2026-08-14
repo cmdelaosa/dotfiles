@@ -63,6 +63,7 @@ No se pierde nada: esa rama está en el commit de `main` y sin nada encima.
 - No trabajar en la raíz «solo para una cosa rápida». La colisión del 13-08-2026
   fue exactamente una cosa rápida.
 
-Al terminar de trabajar, la skill `probar`, que deja la PR abierta y verde para
-que la mire su dueño — y le pregunta antes si además quiere la pila local.
-`cerrar` solo cuando dé el visto bueno.
+Al terminar de programar no se espera a nadie: la cadena de `probar` arranca
+sola — verifica, revisa a `max` en el mejor Opus, commitea los arreglos, empuja
+y deja el CI corriendo; entonces, y no antes, pregunta si además quiere la pila
+local. `cerrar` solo cuando dé el visto bueno.
