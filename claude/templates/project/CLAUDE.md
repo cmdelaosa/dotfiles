@@ -29,7 +29,7 @@
   then delete the branch locally and on the remote.
 - **Before the push, in this order: `./verificar.sh`, then the review.** Green
   first, because reviewing code that fails the lint spends the review twice. Then
-  `/code-review <branch> --fix` — or the `code-reviewer` subagent — over the
+  `/code-review <branch> max --fix` — or the `code-reviewer` subagent — over the
   branch's whole diff, apply what's right, and commit it. The PR opens with the
   review's fixes already inside; one that grows three "fixing what the review
   said" commits has to be read three times.
@@ -42,7 +42,7 @@
 - Plan first. Present the plan and wait for my approval before writing code.
 - For anything non-trivial, interview me one question at a time — your recommendation first with a short justification, then 2-4 alternatives — and write the agreed spec to `docs/specs/<name>.md` before implementing. Small, unambiguous fixes skip this.
 - Never report work as done without running `./verificar.sh` and pasting its output. Don't assert that checks passed.
-- Before calling a feature finished, have the `code-reviewer` subagent review the diff in a fresh context, then fix what it finds. Use `/code-review` for large or risky changes.
+- Before calling a feature finished, have the `code-reviewer` subagent review the diff in a fresh context, then fix what it finds. Use `/code-review <branch> max --fix` for large or risky changes — write the level: with none given the skill silently reuses the last one typed.
 - Don't widen scope. Name adjacent problems you spot; don't fix them unasked.
 - Match the surrounding code's style over any general preference.
 

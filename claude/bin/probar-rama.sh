@@ -13,13 +13,19 @@
 # puerto, para una rama que muchas veces se juzga entera mirando la PR. Se pide:
 # `--con-pila` al lanzarlo, o `--solo-pila` más tarde, cuando te apetezca verla.
 #
-# Quien pregunta es la skill `probar`, y pregunta **lo primero**: lanza esto de
-# fondo y te consulta mientras el CI corre, para que la respuesta no cueste
-# esperar. Aquí abajo solo hay banderas; el guión no pregunta nada por su cuenta,
-# porque casi siempre corre en segundo plano y una pregunta ahí no la lee nadie.
-# Por lo mismo, **todas las salidas avisan por el sistema**: si el final normal
-# ya no es una pila levantada, tampoco puede serlo el único momento en que suena
-# algo, o volver a mirar el terminal pasa a ser cosa de acordarse.
+# Quien pregunta es la skill `probar`, y pregunta **con el CI ya corriendo**
+# *(14-08-2026)*: lanza esto de fondo, vigila la salida hasta «espero al CI de
+# la PR #N» —esa línea es contrato, con su prueba en la matriz— y consulta
+# mientras el CI quema sus minutos, para que la respuesta no cueste esperar.
+# Aquí abajo solo hay banderas; el guión no pregunta nada por su cuenta, porque
+# casi siempre corre en segundo plano y una pregunta ahí no la lee nadie. Por lo
+# mismo, **las despedidas avisan por el sistema**: si el final normal ya no es
+# una pila levantada, tampoco puede serlo el único momento en que suena algo.
+# Lo que NO suena es lo que sale por `morir`, y son dos grupos: los CUATRO
+# frenos de antes del push (árbol sucio, nada que empujar, verificar.sh rojo,
+# diff sin revisar), que mueren en lib-ramas.sh, y dos abortos de después de
+# empujar (la PR ya cerrada, y quedarse sin puerto libre al levantar la pila).
+# Contarlos es de la skill.
 #
 # **No fusiona nada.** Esa es toda la idea: hasta el 13-08-2026 `cerrar-rama.sh`
 # fusionaba sola en cuanto el CI se ponía verde, y eso deja fuera lo único que el

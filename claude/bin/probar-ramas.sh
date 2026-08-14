@@ -623,6 +623,10 @@ revisar "$d" sin-pedirla >/dev/null 2>&1
 msg=$(probar_rama verde "$d" sin-pedirla 2>&1) && salio=0 || salio=1
 afirmar "sin banderas sale bien"            test "$salio" = 0
 afirmar "y no levanta absolutamente nada"   test -z "$(registro "$d" docker.log)"
+# «espero al CI de la PR #N» es contrato desde el 14-08-2026: es la línea que la
+# skill `probar` vigila para preguntar por la pila mientras el CI corre. Si el
+# texto cambia, la skill no la ve y la pregunta llega doce minutos tarde.
+afirmar "anuncia el CI con la línea que la skill vigila" contiene "espero al CI de la PR #1" "$msg"
 afirmar "da la URL de la PR"                contiene "PR:      https://example.test/pr/1" "$msg"
 afirmar "y dice cómo levantarla luego"      contiene "probar-rama.sh sin-pedirla --solo-pila" "$msg"
 afirmar "la rama sigue sin fusionar"        hay_rama "$d" sin-pedirla
