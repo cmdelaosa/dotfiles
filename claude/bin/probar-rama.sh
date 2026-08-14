@@ -1,6 +1,12 @@
 #!/bin/bash
-# Deja una rama lista para que la pruebes: empuja, abre la PR, espera al CI y, si
-# está verde, levanta SU pila local con una copia de tus datos y te avisa.
+# Deja una rama lista para que la pruebes: comprueba en local, exige que el diff
+# esté revisado, empuja, abre la PR, espera al CI y, si está verde, levanta SU
+# pila local con una copia de tus datos y te avisa.
+#
+# Los dos frenos van ANTES del push a propósito. `verificar.sh` porque descubrir
+# un lint roto en el CI cuesta el viaje entero, y la revisión porque una PR que
+# nace ya con lo que el revisor ha dicho se lee de una vez, en vez de crecer
+# tres commits de «arreglo lo revisado» que también hay que leer.
 #
 # **No fusiona nada.** Esa es toda la idea: hasta el 13-08-2026 `cerrar-rama.sh`
 # fusionaba sola en cuanto el CI se ponía verde, y eso deja fuera lo único que el
@@ -18,19 +24,24 @@ set -Eeuo pipefail
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib-ramas.sh"
 
-rama_arg=""; forzar=0; sin_ci=0; sin_pila=0
+rama_arg=""; forzar=0; sin_ci=0; sin_pila=0; sin_verificar=0; sin_revisar=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --forzar)   forzar=1 ;;
-    --sin-ci)   sin_ci=1 ;;
-    --sin-pila) sin_pila=1 ;;
+    --forzar)        forzar=1 ;;
+    --sin-ci)        sin_ci=1 ;;
+    --sin-pila)      sin_pila=1 ;;
+    --sin-verificar) sin_verificar=1 ;;
+    --sin-revisar)   sin_revisar=1 ;;
     -h | --help)
       morir "Uso: probar-rama.sh [<rama>] [--forzar] [--sin-ci] [--sin-pila]" \
+        "                        [--sin-verificar] [--sin-revisar]" \
         "" \
-        "  <rama>       la que se prueba. Por defecto, la del directorio actual." \
-        "  --forzar     sigue aunque haya cambios sin guardar." \
-        "  --sin-ci     no espera al CI: levanta la pila y ya." \
-        "  --sin-pila   solo empuja y abre la PR; no levanta nada." ;;
+        "  <rama>            la que se prueba. Por defecto, la del directorio actual." \
+        "  --forzar          sigue aunque haya cambios sin guardar." \
+        "  --sin-ci          no espera al CI: levanta la pila y ya." \
+        "  --sin-pila        solo empuja y abre la PR; no levanta nada." \
+        "  --sin-verificar   no lanza el verificar.sh de la rama." \
+        "  --sin-revisar     empuja aunque el diff no esté revisado." ;;
     -*) morir "Opción desconocida: $1" ;;
     *)  [ -z "$rama_arg" ] || morir "Sobra un argumento: $1"; rama_arg="$1" ;;
   esac
@@ -41,6 +52,15 @@ resolver_repo "$rama_arg" probar
 exigir_arbol_limpio "$forzar"
 [ -n "$ruta_wt" ] || morir "La rama '$rama' no tiene worktree." \
   "Ábrelo con: abrir-rama.sh $rama"
+
+# Antes que nada, que haya algo que empujar: comprobar y revisar una rama vacía
+# es gastar minutos para acabar diciendo que no había nada que hacer.
+hay_algo_que_empujar
+
+# Primero lo mecánico y luego lo que hay que leer: si `verificar.sh` está rojo,
+# la revisión se habría gastado en código que ni siquiera pasa el lint.
+exigir_verificacion "$sin_verificar"
+exigir_revision "$sin_revisar"
 
 empujar_y_abrir_pr
 
@@ -65,9 +85,19 @@ fi
 [ "$sin_pila" != 1 ] || { aviso "" "Listo. La PR es $($GH pr view "$numero" --json url --jq .url)"; exit 0; }
 
 # ── La pila de la rama ──────────────────────────────────────────────────────
+# «Verde» solo si alguien ha mirado. Con `--sin-ci` este mensaje decía «La PR
+# está verde y esperando» sin haber preguntado por un solo check, y lo dijo de
+# verdad el 14-08-2026 sobre una PR cuyo CI estaba en rojo. Afirmar un verde que
+# no se ha comprobado es la única cosa que ninguno de estos guiones puede hacer.
 [ -f "$ruta_wt/docker-compose.yml" ] || {
-  aviso "" 'Aquí no hay docker-compose.yml: no hay pila que levantar.' \
-           "La PR está verde y esperando: $($GH pr view "$numero" --json url --jq .url)"
+  url_pr=$($GH pr view "$numero" --json url --jq .url)
+  aviso "" 'Aquí no hay docker-compose.yml: no hay pila que levantar.'
+  if [ "$sin_ci" = 1 ]; then
+    aviso "La PR está abierta y su CI sin mirar, que es lo que pide --sin-ci:" \
+          "  $url_pr"
+  else
+    aviso "La PR está verde y esperando: $url_pr"
+  fi
   exit 0
 }
 

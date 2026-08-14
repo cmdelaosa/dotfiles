@@ -1,6 +1,6 @@
 ---
 name: new-project
-description: Scaffold the project harness into the current directory — lean CLAUDE.md, path-scoped rules, code-reviewer subagent, plan-mode gate, verify entrypoint and docs skeleton.
+description: Scaffold the project harness into the current directory — lean CLAUDE.md, path-scoped rules, code-reviewer subagent, plan-mode gate, verificar.sh entrypoint and docs skeleton.
 disable-model-invocation: true
 argument-hint: "[project name]"
 allowed-tools: Read, Write, Edit, Bash, Glob
@@ -61,6 +61,27 @@ Makefile target — chaining format, lint, typecheck and test for the detected s
 
 It must print each step's real output, not just a pass/fail. The whole point is that
 evidence can be shown rather than asserted.
+
+Then write **`verificar.sh` at the repo root**, executable, wrapping it:
+
+```bash
+#!/usr/bin/env bash
+# format + lint + typecheck + test. Lo lanza probar-rama.sh antes de empujar.
+set -uo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
+{{VERIFY_CMD}}
+```
+
+Substituted, not the literal placeholder — this file is written after step 5, so
+that grep won't catch a stub here. And `chmod +x verificar.sh`: a non-executable one
+makes `probar-rama.sh` stop and complain, on purpose — something that looks like a
+net and isn't is worse than none.
+
+The fixed name is the whole point. `probar-rama.sh` runs `./verificar.sh` in the
+branch's worktree and refuses to push if it exits non-zero, so every repo gets the
+same brake without the script having to learn each stack. Keep it **fast** — seconds,
+not minutes. Anything slow belongs in CI: a brake that costs five minutes gets a
+`--sin-verificar` on every call, and then it brakes nothing.
 
 ## 7. Format hook
 

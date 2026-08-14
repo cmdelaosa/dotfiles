@@ -146,7 +146,19 @@ activa_en() {
   for f in "$dir"/*.jsonl; do
     [ -f "$f" ] || continue
     [ "$f" = "$mi_transcripcion" ] && continue
-    m=$(stat -f %m "$f" 2>/dev/null || stat -c %m "$f" 2>/dev/null) || continue
+    # `date -r <fichero>` y no `stat`, que aquí no hay forma de escribir dos
+    # veces sin equivocarse: en BSD la fecha es `stat -f %m` y en GNU es
+    # `stat -c %Y` —`%m` en GNU es el PUNTO DE MONTAJE—, pero lo que rompe el
+    # apaño de «prueba uno y si falla el otro» es que **`stat -f` en GNU no
+    # falla**: significa «estado del sistema de ficheros», sale con 0 y escupe
+    # seis líneas de bloques e inodos. Así que la caída nunca ocurría, `m` no
+    # era un número, ninguna transcripción parecía reciente y fuera de macOS el
+    # hook dejaba pasar justo lo que existe para frenar.
+    #
+    # `date -r` lee la fecha de modificación de un fichero en los dos, con la
+    # misma bandera y el mismo significado. Comprobado en macOS y en Ubuntu:
+    # 1786690943 los dos sobre el mismo fichero.
+    m=$(date -r "$f" +%s 2>/dev/null) || continue
     [ $(( (ahora - m) / 60 )) -lt "$ttl_min" ] && return 0
   done
   return 1
