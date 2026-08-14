@@ -278,7 +278,26 @@ trabajar() { # trabajar <ruta-del-worktree> <texto>
   git -C "$1" commit -qm "feat: $2"
 }
 
-abrir() { ( cd "$1/repo" && ESTADO="$1/estado" ESPEJO="$1/espejo" "$bin/abrir-rama.sh" "$2" ); }
+# Imprime la ruta del worktree, y cuando falla imprime una ruta IMPOSIBLE en vez
+# de nada. Una ruta vacía es lo peligroso, y no por poco: `git -C ""` no falla
+# —git lo documenta como «deja el directorio actual sin cambiar»—, así que un
+# `git -C "$ruta" commit` con `$ruta` vacía commitea el repositorio que la matriz
+# está probando. El 14-08-2026 lo hizo, y salió verde: el destrozo no estaba en
+# ninguna aserción, estaba en otro repositorio.
+#
+# El freno va AQUÍ y no en cada consumidor porque los consumidores son ocho y el
+# noveno lo escribirá alguien que no habrá leído esto. Con una ruta imposible,
+# cualquier `git -C` que la reciba falla en el sitio y a la vista.
+#
+# El código de salida se conserva: hay casos que llaman a `abrir` esperando que
+# falle —`negar "se niega a llamarse main" abrir …`— y juzgan por él.
+abrir() {            # abrir <dir-del-caso> <rama>
+  local ruta codigo=0
+  ruta=$( cd "$1/repo" && ESTADO="$1/estado" ESPEJO="$1/espejo" "$bin/abrir-rama.sh" "$2" ) ||
+    codigo=$?
+  printf '%s' "${ruta:-/worktree-que-no-se-pudo-abrir}"
+  return "$codigo"
+}
 
 # cerrar <escenario> <dir> [args…]. El escenario va de argumento y no de
 # `ESCENARIO=x cerrar …` por dos motivos que ya costaron cuatro falsos verdes:
@@ -396,6 +415,15 @@ antes=$(git rev-parse HEAD 2>/dev/null || printf 'sin-repo')
 ( trabajar "" uno ) >/dev/null 2>&1 && guardado=0 || guardado=1
 afirmar "trabajar sin worktree se niega"    test "$guardado" = 1
 afirmar "y no commitea nada donde está"     test "$antes" = "$(git rev-parse HEAD 2>/dev/null || printf 'sin-repo')"
+
+# Y el freno de verdad está un piso más arriba, en `abrir`: los ocho sitios que
+# usan `$ruta` no pasan todos por `trabajar` —dos hacen su propio `git -C
+# "$ruta" commit`—, así que lo que no puede existir es la ruta vacía.
+d=$(montar)
+ruta=$(abrir "$d" main 2>/dev/null) && fallo=0 || fallo=1
+afirmar "abrir se niega con un nombre inválido"  test "$fallo" = 1
+negar   "y NO devuelve una ruta vacía"           test -z "$ruta"
+negar   "ni una que git -C pueda confundir con «aquí»" test -d "$ruta"
 
 caso "abrir-rama.sh: lo que tiene que salir bien"
 d=$(montar)
