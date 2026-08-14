@@ -31,7 +31,23 @@ concurrency:
 jobs:
   verificar:
     name: verificar.sh
-    runs-on: ubuntu-latest
+    # Variable y no un `runs-on` escrito a mano, igual que welzy y por lo mismo:
+    # mover el trabajo a un runner propio pasa a ser tocar una variable en el
+    # panel, sin commit, y volver es borrarla.
+    #
+    # Hace falta más de lo que parece. La primera ejecución de este workflow, el
+    # 14-08-2026, murió en 2 segundos: sin runner asignado (`runner_name` vacío),
+    # sin un solo paso y con el zip de logs VACÍO. Eso no es que el guión falle,
+    # es que GitHub no llegó a dar máquina — la firma de quedarse sin los minutos
+    # incluidos, que en este plan y con estos repositorios privados ya pasó dos
+    # veces en agosto. welzy no se entera porque sus tres trabajos corren en
+    # `cmdlo-ci`, un runner propio.
+    #
+    # Y ese runner NO se puede reutilizar tal cual: en una cuenta personal los
+    # runners son de un repositorio, y `cmdlo-ci` está registrado en welzy. Para
+    # que esta variable sirva hay que registrar otro en este repositorio, o
+    # hacerlo público —que además regala la protección de rama que hoy no hay—.
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     # Las tres matrices tardan minuto y medio en un portátil. Diez es margen de
     # sobra y a la vez un tope para que un `sleep` mal puesto no se coma la cuota.
     timeout-minutes: 10
