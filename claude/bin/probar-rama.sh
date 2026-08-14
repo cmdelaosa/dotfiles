@@ -1,5 +1,11 @@
 #!/bin/bash
-# Deja una rama lista para que la pruebes: empuja, abre la PR y espera al CI.
+# Deja una rama lista para que la pruebes: comprueba en local, exige que el diff
+# esté revisado, empuja, abre la PR y espera al CI.
+#
+# Los dos frenos van ANTES del push a propósito. `verificar.sh` porque descubrir
+# un lint roto en el CI cuesta el viaje entero, y la revisión porque una PR que
+# nace ya con lo que el revisor ha dicho se lee de una vez, en vez de crecer
+# tres commits de «arreglo lo revisado» que también hay que leer.
 #
 # **La pila local ya no se levanta sola** *(14-08-2026)*. Hasta ese día esto
 # terminaba en un `docker compose up --build` en cuanto había verde, y levantar
@@ -31,28 +37,34 @@ set -Eeuo pipefail
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib-ramas.sh"
 
-rama_arg=""; forzar=0; sin_ci=0; pidio_con=0; pidio_solo=0
+rama_arg=""; forzar=0; sin_ci=0; sin_verificar=0; sin_revisar=0
+pidio_con=0; pidio_solo=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --forzar)    forzar=1 ;;
-    --sin-ci)    sin_ci=1 ;;
-    --con-pila)  pidio_con=1 ;;
-    # Levantar y ya: ni empuja, ni abre PR, ni pregunta al CI. Es el camino de
-    # «dije que no y he cambiado de idea», y lo caro de ese camino sería volver
-    # a pasar por todo lo que ya pasó hace diez minutos.
-    --solo-pila) pidio_solo=1 ;;
+    --forzar)        forzar=1 ;;
+    --sin-ci)        sin_ci=1 ;;
+    --sin-verificar) sin_verificar=1 ;;
+    --sin-revisar)   sin_revisar=1 ;;
+    --con-pila)      pidio_con=1 ;;
+    # Levantar y ya: ni comprueba, ni revisa, ni empuja, ni abre PR, ni pregunta
+    # al CI. Es el camino de «dije que no y he cambiado de idea», y lo caro de
+    # ese camino sería volver a pasar por todo lo que ya pasó hace diez minutos.
+    --solo-pila)     pidio_solo=1 ;;
     -h | --help)
       morir "Uso: probar-rama.sh [<rama>] [--forzar] [--sin-ci]" \
+        "                        [--sin-verificar] [--sin-revisar]" \
         "                        [--con-pila | --solo-pila]" \
         "" \
-        "  <rama>        la que se prueba. Por defecto, la del directorio actual." \
-        "  --forzar      sigue aunque haya cambios sin guardar." \
-        "  --sin-ci      no espera al CI." \
-        "  --con-pila    además, levanta la pila local de la rama al terminar." \
-        "  --solo-pila   solo la pila: ni empuja, ni abre PR, ni mira el CI." \
+        "  <rama>            la que se prueba. Por defecto, la del directorio actual." \
+        "  --forzar          sigue aunque haya cambios sin guardar." \
+        "  --sin-ci          no espera al CI." \
+        "  --sin-verificar   no lanza el verificar.sh de la rama." \
+        "  --sin-revisar     empuja aunque el diff no esté revisado." \
+        "  --con-pila        además, levanta la pila local de la rama al terminar." \
+        "  --solo-pila       solo la pila: ni comprueba, ni empuja, ni mira el CI." \
         "" \
-        "Sin --con-pila no se levanta nada: empuja, abre la PR, espera al CI y" \
-        "te dice dónde está. La pila es lo caro, y se pide." ;;
+        "Sin --con-pila no se levanta nada: comprueba, empuja, abre la PR, espera" \
+        "al CI y te dice dónde está. La pila es lo caro, y se pide." ;;
     -*) morir "Opción desconocida: $1" ;;
     *)  [ -z "$rama_arg" ] || morir "Sobra un argumento: $1"; rama_arg="$1" ;;
   esac
@@ -62,16 +74,23 @@ done
 # Una combinación que se contradice se rechaza en vez de resolverse a favor de
 # una de las dos. La ayuda las escribe como excluyentes, y aceptar las dos
 # callando —quedándose con `--solo-pila`, que además NO empuja— daría por hecho
-# un empujón que no ocurre. Lo mismo con `--sin-ci` junto a `--solo-pila`: no
-# hay CI que saltarse ahí, y una bandera que no hace nada engaña sobre lo que
-# se puede pedir. Es el mismo motivo por el que `--sin-pila` murió gritando.
+# un empujón que no ocurre. Igual con lo que `--solo-pila` ya se salta: no hay
+# CI que no esperar, ni verificación ni revisión que perdonar, y una bandera que
+# no hace nada engaña sobre lo que se puede pedir. Es el mismo motivo por el que
+# `--sin-pila` murió gritando en vez de quedarse de adorno.
 [ "$pidio_con$pidio_solo" != 11 ] ||
   morir "--con-pila y --solo-pila piden cosas distintas; elige una:" \
-        "  --con-pila    empuja, espera al CI y además levanta la pila." \
-        "  --solo-pila   solo levanta la pila, sin tocar la PR ni el CI."
-[ "$pidio_solo$sin_ci" != 11 ] ||
-  morir "--solo-pila ya no mira el CI: --sin-ci no añade nada." \
-        "Quita uno de los dos."
+        "  --con-pila    comprueba, empuja, espera al CI y además levanta la pila." \
+        "  --solo-pila   solo levanta la pila, sin tocar nada más."
+if [ "$pidio_solo" = 1 ]; then
+  sobra=""
+  [ "$sin_ci"        != 1 ] || sobra="$sobra --sin-ci"
+  [ "$sin_verificar" != 1 ] || sobra="$sobra --sin-verificar"
+  [ "$sin_revisar"   != 1 ] || sobra="$sobra --sin-revisar"
+  [ -z "$sobra" ] ||
+    morir "--solo-pila ya se salta todo eso; sobra:$sobra" \
+          "Solo levanta la pila: no comprueba, no revisa, no empuja y no mira el CI."
+fi
 
 hacer_pila=0; hacer_pr=1
 [ "$pidio_con"  != 1 ] || hacer_pila=1
@@ -80,12 +99,6 @@ hacer_pila=0; hacer_pr=1
 resolver_repo "$rama_arg" probar
 [ -n "$ruta_wt" ] || morir "La rama '$rama' no tiene worktree." \
   "Ábrelo con: abrir-rama.sh $rama"
-
-# El árbol sucio solo estropea una PR, que es lo que sale incompleto; una pila
-# local se construye del disco tal cual y verlo sucio es justo lo que quieres.
-# Y con el flujo nuevo el árbol está sucio a menudo cuando llega `--solo-pila`:
-# el revisor acaba de dejar sus arreglos ahí mientras el CI corría.
-[ "$hacer_pr" != 1 ] || exigir_arbol_limpio "$forzar"
 
 # Si hay pila que levantar lo decide el guión, que mira el worktree de verdad,
 # y no quien lo llama por su cuenta: la skill `probar` juzgaba lo mismo por su
@@ -111,8 +124,11 @@ avisar() {                              # avisar <mensaje> [url-que-abrir]
 # hacer ahora. Estaba escrito tres veces y ya había empezado a separarse —dos
 # espacios en una copia y uno en otra, y una de las tres sin decir qué sigue—,
 # que es exactamente como una copia se queda callada sin que nadie lo note.
-# La pista de `--solo-pila` solo se da donde hay pila: en dotfiles se ofrecía un
-# comando que solo sabe contestar «aquí no hay docker-compose.yml».
+#
+# Dos cosas que este mensaje no puede hacer. Una, ofrecer `--solo-pila` donde no
+# hay pila: en dotfiles se ofrecía en cada pasada, y allí ese comando solo sabe
+# contestar que no hay docker-compose.yml. Y dos, dejar creer que el CI está
+# verde cuando nadie lo ha mirado, que es lo que pide `--sin-ci`.
 despedida() {                           # despedida <primera-línea…>
   local siguiente
   if hay_pila; then
@@ -120,13 +136,35 @@ despedida() {                           # despedida <primera-línea…>
   else
     siguiente="  local:   aquí no hay docker-compose.yml; no hay pila que levantar"
   fi
-  aviso "" "$@" "" \
+  aviso "" "$@"
+  [ -z "$nota_ci" ] || aviso "" "$nota_ci"
+  aviso "" \
     "  PR:      ${url_pr:-todavía no hay ninguna}" \
     "$siguiente" \
     "  cerrar:  cerrar-rama.sh $rama"
 }
 
+# Lo que se puede decir del CI, y solo si se ha preguntado. Un «verde» que nadie
+# ha comprobado es lo único que ninguno de estos guiones puede permitirse decir,
+# y con `--sin-ci` llegó a decirlo de verdad sobre una PR en rojo.
+nota_ci=""
+
 if [ "$hacer_pr" = 1 ]; then
+  # El árbol sucio solo estropea una PR, que es lo que sale incompleto; una pila
+  # local se construye del disco tal cual y verlo sucio es justo lo que quieres.
+  # Y con el flujo nuevo el árbol está sucio a menudo cuando llega `--solo-pila`:
+  # el revisor acaba de dejar sus arreglos ahí mientras el CI corría.
+  exigir_arbol_limpio "$forzar"
+
+  # Antes que nada, que haya algo que empujar: comprobar y revisar una rama vacía
+  # es gastar minutos para acabar diciendo que no había nada que hacer.
+  hay_algo_que_empujar
+
+  # Primero lo mecánico y luego lo que hay que leer: si `verificar.sh` está rojo,
+  # la revisión se habría gastado en código que ni siquiera pasa el lint.
+  exigir_verificacion "$sin_verificar"
+  exigir_revision "$sin_revisar"
+
   empujar_y_abrir_pr
   recordar_url_pr
 
@@ -148,6 +186,9 @@ if [ "$hacer_pr" = 1 ]; then
          exit 0 ;;
     esac
     paso "CI en verde"
+    nota_ci="Su CI está verde."
+  else
+    nota_ci="Su CI está sin mirar, que es lo que pide --sin-ci."
   fi
 else
   recordar_url_pr

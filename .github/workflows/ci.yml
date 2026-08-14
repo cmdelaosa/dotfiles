@@ -1,0 +1,67 @@
+name: CI
+
+# Un solo trabajo, que es el mismo `./verificar.sh` que corre en local antes de
+# empujar. Que sean el mismo guión y no dos listas es todo el diseño: una lista
+# repetida se desincroniza al primer cambio, y entonces el verde de aquí y el de
+# la máquina dejan de significar lo mismo sin que nadie se entere.
+#
+# Solo en `pull_request`. Un push a `main` es la fusión de una PR que este mismo
+# workflow acaba de aprobar, así que añadir `push` sería correr la suite dos
+# veces sobre el mismo árbol — el gasto que welzy ya se quitó de encima. La
+# consecuencia, dicha en voz alta: **un push directo a main no lo comprueba
+# nadie**, y lo que lo impide es el hook `git-no-main.sh` de este repositorio.
+#
+# SIN `paths-ignore`, y a propósito, al revés que welzy. Aquí una PR de solo
+# markdown no dispararía nada, y «sin checks» es exactamente lo que
+# `cerrar-rama.sh` se niega a fusionar: la rama se quedaría abierta esperando a
+# que alguien la fusione a mano. Con el trabajo en un par de minutos, que toda PR
+# tenga veredicto vale más que los minutos que ahorraría saltárselo.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+# Empujar otra vez a la misma rama invalida la ejecución anterior: comprueba el
+# mismo ref y sobra. La cuota de este plan se agotó dos veces en agosto de 2026.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verificar:
+    name: verificar.sh
+    # Variable y no un `runs-on` escrito a mano, igual que welzy y por lo mismo:
+    # mover el trabajo a un runner propio pasa a ser tocar una variable en el
+    # panel, sin commit, y volver es borrarla.
+    #
+    # Hace falta más de lo que parece. La primera ejecución de este workflow, el
+    # 14-08-2026, murió en 2 segundos: sin runner asignado (`runner_name` vacío),
+    # sin un solo paso y con el zip de logs VACÍO. Eso no es que el guión falle,
+    # es que GitHub no llegó a dar máquina — la firma de quedarse sin los minutos
+    # incluidos, que en este plan y con estos repositorios privados ya pasó dos
+    # veces en agosto. welzy no se entera porque sus tres trabajos corren en
+    # `cmdlo-ci`, un runner propio.
+    #
+    # Y ese runner NO se puede reutilizar tal cual: en una cuenta personal los
+    # runners son de un repositorio, y `cmdlo-ci` está registrado en welzy. Para
+    # que esta variable sirva hay que registrar otro en este repositorio, o
+    # hacerlo público —que además regala la protección de rama que hoy no hay—.
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    # Las tres matrices tardan minuto y medio en un portátil. Diez es margen de
+    # sobra y a la vez un tope para que un `sleep` mal puesto no se coma la cuota.
+    timeout-minutes: 10
+    steps:
+      # v7, la misma que welzy: dos repositorios de la misma persona clavando
+      # versiones distintas de la misma acción es una actualización que se hará
+      # dos veces y se olvidará una.
+      - uses: actions/checkout@v7
+      # `jq`, `git`, `curl` y `nc` ya vienen en el runner, y las matrices falsean
+      # `gh`, `docker` y el avisador, así que no hace falta instalar nada.
+      #
+      # Lo que aquí NO se comprueba, y conviene saberlo antes de fiarse del
+      # verde: `/bin/bash` en Ubuntu es un 5.x, y los hooks los ejecuta el 3.2 de
+      # Apple, que acepta menos cosas. `verificar.sh` lo dice al arrancar. Esa
+      # comprobación entera solo vale lanzada en el Mac; correrla también aquí
+      # cuesta cero y pilla los errores de sintaxis de toda la vida.
+      - run: ./verificar.sh
