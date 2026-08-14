@@ -36,7 +36,10 @@ jobs:
     # sobra y a la vez un tope para que un `sleep` mal puesto no se coma la cuota.
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      # v7, la misma que welzy: dos repositorios de la misma persona clavando
+      # versiones distintas de la misma acción es una actualización que se hará
+      # dos veces y se olvidará una.
+      - uses: actions/checkout@v7
       # `jq`, `git`, `curl` y `nc` ya vienen en el runner, y las matrices falsean
       # `gh`, `docker` y el avisador, así que no hace falta instalar nada.
       #
