@@ -90,13 +90,14 @@ fi
 # verdad el 14-08-2026 sobre una PR cuyo CI estaba en rojo. Afirmar un verde que
 # no se ha comprobado es la única cosa que ninguno de estos guiones puede hacer.
 [ -f "$ruta_wt/docker-compose.yml" ] || {
+  url_pr=$($GH pr view "$numero" --json url --jq .url)
+  aviso "" 'Aquí no hay docker-compose.yml: no hay pila que levantar.'
   if [ "$sin_ci" = 1 ]; then
-    estado_ci="y su CI sin mirar, porque me lo has pedido con --sin-ci"
+    aviso "La PR está abierta y su CI sin mirar, que es lo que pide --sin-ci:" \
+          "  $url_pr"
   else
-    estado_ci="verde"
+    aviso "La PR está verde y esperando: $url_pr"
   fi
-  aviso "" 'Aquí no hay docker-compose.yml: no hay pila que levantar.' \
-           "La PR está $estado_ci: $($GH pr view "$numero" --json url --jq .url)"
   exit 0
 }
 
