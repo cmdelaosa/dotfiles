@@ -151,12 +151,29 @@ fi
 #
 # Por prefijo y no por el nombre exacto: si la pila gana un segundo volumen
 # mañana, este barrido ya se lo lleva. El `_` del final es lo que impide que
-# `welzy-cartera` se lleve por delante los de `welzy-cartera-en-pestanas`.
+# `welzy-cartera` se lleve por delante los de `welzy-cartera-en-pestanas`, y el
+# ancla `^` que un nombre de rama se cuele en medio de otro.
+#
+# Que el filtro de Docker entiende expresiones regulares y no solo subcadenas
+# está comprobado contra el Docker de verdad, no solo contra el doble de la
+# matriz —que es donde esto se habría quedado en verde diciendo mentiras—:
+#
+#     docker volume ls -q --filter name=^welzy-cartera_   → (vacío)
+#     docker volume ls -q --filter name=^welzy_           → welzy_postgres-data
+#
+# El nombre del proyecto no puede traer metacaracteres: `proyecto_de_rama` lo
+# pasa por un `tr -cd '[:alnum:]-'`.
 sobrantes=$($DOCKER volume ls -q --filter "name=^${proyecto}_" 2>/dev/null || true)
 if [ -n "$sobrantes" ]; then
-  paso "borro los volúmenes de la copia que Compose no se lleva"
+  paso "borro los volúmenes de copia que el down no se lleva"
+  # Y si alguno no se deja borrar se dice, en vez de dar el paso por hecho: un
+  # `|| true` aquí sería otra vez el mismo fallo que este cambio arregla —
+  # anunciar una limpieza que no ha ocurrido—, solo que un piso más abajo.
   printf '%s\n' "$sobrantes" | while IFS= read -r v; do
-    [ -n "$v" ] && $DOCKER volume rm "$v" >&2 || true
+    [ -n "$v" ] || continue
+    $DOCKER volume rm "$v" >&2 ||
+      aviso "OJO: no he podido borrar el volumen $v, que sigue ocupando disco." \
+            "    docker volume rm $v"
   done
 fi
 

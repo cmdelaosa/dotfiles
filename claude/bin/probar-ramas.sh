@@ -168,6 +168,11 @@ case "$1 ${2:-}" in
     [ -n "$patron" ] || exit 0
     printf '%s' "${VOLUMENES:-}" | tr ',' '\n' | grep -E -- "$patron" || true
     exit 0 ;;
+  # Un volumen que no se deja borrar —lo normal es que algo lo tenga cogido—,
+  # para poder comprobar que eso se dice en vez de darse por hecho.
+  "volume rm")
+    [ "${VOLUMEN_ATASCADO:-0}" = 1 ] && exit 1
+    exit 0 ;;
 esac
 case "$*" in
   *"ps -aq") echo "contenedor-de-mentira" ;;  # para que el `down` llegue a correr
@@ -264,6 +269,7 @@ cerrar() {
   ( cd "$d/repo" &&
       ESTADO="$d/estado" ESPEJO="$d/espejo" ESCENARIO="$esc" ESPERA_CHECKS=0 \
       DESPLIEGUE_FALLA="${DESPLIEGUE_FALLA:-0}" VOLUMENES="${VOLUMENES:-}" \
+      VOLUMEN_ATASCADO="${VOLUMEN_ATASCADO:-0}" \
       "$bin/cerrar-rama.sh" "$@" )
 }
 
@@ -849,6 +855,17 @@ afirmar "borra el suyo"                     contiene "volume rm repo-cartera_pos
 afirmar "y NO el de la rama que empieza igual" \
         no_contiene "volume rm repo-cartera-en-pestanas_postgres-data" "$log"
 VOLUMENES=""
+
+# Y si el volumen no se deja borrar, se dice. Dar el borrado por hecho es el
+# mismo fallo que este barrido arregla, un piso más abajo.
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" volumen-atascado 2>/dev/null); trabajar "$ruta" uno
+VOLUMENES="repo-volumen-atascado_postgres-data"; VOLUMEN_ATASCADO=1
+msg=$(cerrar verde "$d" volumen-atascado 2>&1)
+negar   "cierra igual: la fusión ya ocurrió"  hay_rama "$d" volumen-atascado
+afirmar "pero avisa de que el volumen sigue ahí" \
+        contiene "no he podido borrar el volumen repo-volumen-atascado_postgres-data" "$msg"
+VOLUMENES=""; VOLUMEN_ATASCADO=0
 
 echo
 if [ "$fallos" -eq 0 ]; then
