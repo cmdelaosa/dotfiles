@@ -29,11 +29,11 @@ sostiene: son dos preguntas distintas y por eso son dos guiones.
 | `claude/hooks/dotfiles-al-dia.sh` | Avisa si la máquina y este repositorio han dejado de coincidir |
 | `claude/hooks/probar-*.sh` | Las matrices de los dos hooks bloqueantes (64 y 57 casos) |
 | `claude/bin/abrir-rama.sh` | Abre la rama **y** su worktree `wt<rama>` desde `origin/<principal>` recién traído, y rechaza los nombres que no dicen nada |
-| `claude/bin/probar-rama.sh` | Lanza el `verificar.sh` de la rama, exige que el diff esté revisado, empuja, abre la PR, espera al CI y —solo en verde— levanta la pila local de esa rama con una **copia** de los datos. No fusiona nunca |
+| `claude/bin/probar-rama.sh` | Lanza el `verificar.sh` de la rama, exige que el diff esté revisado, empuja, abre la PR y espera al CI. No fusiona nunca, y **no levanta nada** si no se pide: con `--con-pila` (o `--solo-pila` después) monta la pila local de esa rama con una **copia** de los datos |
 | `claude/bin/marcar-revisado.sh` | Sella el HEAD que ya ha pasado por el revisor. Caduca con el commit siguiente, que es lo que hace que el sello signifique algo |
 | `claude/bin/cerrar-rama.sh` | Recomprueba el verde, comprueba que no es anterior al `main` de ahora, fusiona, despliega si el repo tiene el contrato de cmdlo, y limpia pila, worktree y las dos ramas |
 | `claude/bin/lib-ramas.sh` | Lo que comparten los tres: resolver el repo, los frenos, el CI, la pila |
-| `claude/bin/probar-ramas.sh` | La matriz de los cuatro (145 casos), con GitHub, Docker, curl y nc de mentira |
+| `claude/bin/probar-ramas.sh` | La matriz de los cuatro (204 casos), con GitHub, Docker, curl y nc de mentira |
 | `claude/skills/` | `rama`, `probar`, `cerrar` (el flujo de ramas), más `despliega`, `grill-me` y `new-project` |
 | `verificar.sh` | Sintaxis de todos los guiones y las tres matrices. Lo lanza `probar-rama.sh` antes de empujar, así que un error se ve aquí y no doce minutos después en el CI |
 | `.github/workflows/ci.yml` | Un trabajo, y es **este mismo `verificar.sh`**. El verde de la PR y el de tu portátil son la misma pregunta, no dos listas que se desincronizan |
@@ -130,7 +130,7 @@ cualquier sitio y no toca nada de verdad. Lo que eso deja fuera, y hay que proba
 mano de vez en cuando **en welzy**, que es el único repositorio con pila:
 
 ```bash
-~/.claude/bin/probar-rama.sh <una-rama-de-verdad>
+~/.claude/bin/probar-rama.sh <una-rama-de-verdad> --con-pila
 ```
 
 Y comprobar con los ojos: que `docker volume ls` enseña un `<repo>-<rama>_postgres-data`

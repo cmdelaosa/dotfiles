@@ -11,6 +11,14 @@
 # a la RAÍZ del repositorio, así que la matriz probaba la versión de main y no la
 # que se acababa de escribir. Con HOOK=<ruta> se prueba otro — el instalado, por
 # ejemplo, para confirmar que la máquina tiene lo que se cree que tiene.
+# `set -u` como las otras dos matrices: era la única sin él, y es justo el freno
+# que convierte una variable de ruta vacía —por una errata en el nombre— en un
+# error a la vista en vez de en un `git -C ""` silencioso sobre el repositorio
+# desde el que se lanza. Aquí no hay ningún `git -C` con una ruta que pueda
+# quedar vacía (todas se construyen como "$TMP/algo"), pero la asimetría entre
+# las tres matrices es en sí misma la clase de detalle que esconde el próximo.
+set -uo pipefail
+
 aqui=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 hook=${HOOK:-$aqui/git-no-main.sh}
 fallos=0

@@ -42,17 +42,17 @@ shift 2
 
 case $accion in
   view)
-    case " $* " in
-      *" --jq .url "*) echo "https://example.test/pr/1"; exit 0 ;;
-    esac ;;
-esac
-
-case $accion in
-  view)
     rama=$1
     printf '%s' "$rama" > "$ESTADO/rama"
+    # Sin PR, el `gh` de verdad no imprime nada y sale 1 — también con
+    # `--json url`. Hasta el 14-08-2026 este doble contestaba una URL ANTES de
+    # mirar si la PR existía, así que el único caso que `recordar_url_pr`
+    # existe para tolerar —una rama que nadie ha empujado, o sea `--solo-pila`
+    # a la primera— no lo recorría ninguna prueba, y la línea en blanco que
+    # eso imprime no la veía nadie hasta usarlo de verdad.
     [ -f "$ESTADO/pr-$rama" ] || exit 1
     case " $* " in
+      *" --jq .url "*)    echo "https://example.test/pr/1" ;;
       *" --jq .state "*)  cat "$ESTADO/pr-$rama" ;;
       *" --jq .number "*) echo 1 ;;
     esac
@@ -175,7 +175,20 @@ case "$1 ${2:-}" in
     exit 0 ;;
 esac
 case "$*" in
-  *"ps -aq") echo "contenedor-de-mentira" ;;  # para que el `down` llegue a correr
+  *"ps -aq")
+    # Qué pilas están levantadas lo dice PILAS (proyectos separados por comas).
+    # Hasta el 14-08-2026 esto contestaba «hay un contenedor» pasara lo que
+    # pasara, así que el camino de «aquí no había ninguna pila» —el normal desde
+    # que levantarla se pide— no lo recorría ninguna prueba, y `cerrar-rama.sh`
+    # podía presumir de una limpieza que no había hecho sin que nadie lo viera.
+    proy=""; anterior=""
+    for a in "$@"; do
+      [ "$anterior" = -p ] && proy=$a
+      anterior=$a
+    done
+    case ",${PILAS:-}," in
+      *",$proy,"*) echo "contenedor-de-mentira" ;;
+    esac ;;
 esac
 exit 0
 FALSO
@@ -250,12 +263,41 @@ montar() {
 
 # Commit de mentira en la rama, para que haya algo que fusionar.
 trabajar() { # trabajar <ruta-del-worktree> <texto>
+  # ⚠️ La ruta se comprueba antes de tocar nada. `abrir` imprime la ruta del
+  # worktree, y cuando falla imprime NADA: entonces `$1` llega vacío y
+  # `git -C ""` —que git documenta como «deja el directorio actual sin
+  # cambiar»— hace el `add -A` y el `commit` sobre el repositorio DE VERDAD
+  # desde el que se lanzó la matriz. El 14-08-2026 una pasada se llevó así el
+  # trabajo sin guardar de esta misma rama dentro de un commit «feat: uno».
+  # Una matriz que puede commitear el repositorio que está probando no es una
+  # matriz, y el fallo no se ve: sale verde y el destrozo está en otro sitio.
+  [ -n "${1:-}" ] && [ -d "$1" ] ||
+    { mal "trabajar necesita un worktree y ha recibido '${1:-}'"; return 1; }
   printf '%s\n' "$2" > "$1/nuevo.txt"
   git -C "$1" add -A
   git -C "$1" commit -qm "feat: $2"
 }
 
-abrir() { ( cd "$1/repo" && ESTADO="$1/estado" ESPEJO="$1/espejo" "$bin/abrir-rama.sh" "$2" ); }
+# Imprime la ruta del worktree, y cuando falla imprime una ruta IMPOSIBLE en vez
+# de nada. Una ruta vacía es lo peligroso, y no por poco: `git -C ""` no falla
+# —git lo documenta como «deja el directorio actual sin cambiar»—, así que un
+# `git -C "$ruta" commit` con `$ruta` vacía commitea el repositorio que la matriz
+# está probando. El 14-08-2026 lo hizo, y salió verde: el destrozo no estaba en
+# ninguna aserción, estaba en otro repositorio.
+#
+# El freno va AQUÍ y no en cada consumidor porque los consumidores son ocho y el
+# noveno lo escribirá alguien que no habrá leído esto. Con una ruta imposible,
+# cualquier `git -C` que la reciba falla en el sitio y a la vista.
+#
+# El código de salida se conserva: hay casos que llaman a `abrir` esperando que
+# falle —`negar "se niega a llamarse main" abrir …`— y juzgan por él.
+abrir() {            # abrir <dir-del-caso> <rama>
+  local ruta codigo=0
+  ruta=$( cd "$1/repo" && ESTADO="$1/estado" ESPEJO="$1/espejo" "$bin/abrir-rama.sh" "$2" ) ||
+    codigo=$?
+  printf '%s' "${ruta:-/worktree-que-no-se-pudo-abrir}"
+  return "$codigo"
+}
 
 # cerrar <escenario> <dir> [args…]. El escenario va de argumento y no de
 # `ESCENARIO=x cerrar …` por dos motivos que ya costaron cuatro falsos verdes:
@@ -269,7 +311,7 @@ cerrar() {
   ( cd "$d/repo" &&
       ESTADO="$d/estado" ESPEJO="$d/espejo" ESCENARIO="$esc" ESPERA_CHECKS=0 \
       DESPLIEGUE_FALLA="${DESPLIEGUE_FALLA:-0}" VOLUMENES="${VOLUMENES:-}" \
-      VOLUMEN_ATASCADO="${VOLUMEN_ATASCADO:-0}" \
+      VOLUMEN_ATASCADO="${VOLUMEN_ATASCADO:-0}" PILAS="${PILAS:-}" \
       "$bin/cerrar-rama.sh" "$@" )
 }
 
@@ -360,6 +402,29 @@ hay_rama()     { git -C "$1/repo" show-ref --quiet --verify "refs/heads/$2"; }
 hay_remota()   { git -C "$1/repo" ls-remote --exit-code --heads origin "$2" >/dev/null 2>&1; }
 
 # ════════════════════════════════════════════════════════════════════════════
+caso "la matriz no puede commitear el repositorio que está probando"
+# El 14-08-2026 lo hizo: `abrir` falló, `trabajar` recibió la ruta vacía y
+# `git -C ""` —documentado como «deja el directorio actual sin cambiar»— hizo el
+# `add -A` y el `commit` sobre el repositorio desde el que se lanzó la matriz.
+# Se llevó dentro el trabajo sin guardar de la rama, y salió verde igual: el
+# destrozo no estaba en ninguna aserción, estaba en otro sitio.
+#
+# En un subshell a propósito: `trabajar` avisa con `mal`, y aquí el fallo es lo
+# que se espera, así que no puede contar como fallo de la matriz.
+antes=$(git rev-parse HEAD 2>/dev/null || printf 'sin-repo')
+( trabajar "" uno ) >/dev/null 2>&1 && guardado=0 || guardado=1
+afirmar "trabajar sin worktree se niega"    test "$guardado" = 1
+afirmar "y no commitea nada donde está"     test "$antes" = "$(git rev-parse HEAD 2>/dev/null || printf 'sin-repo')"
+
+# Y el freno de verdad está un piso más arriba, en `abrir`: los ocho sitios que
+# usan `$ruta` no pasan todos por `trabajar` —dos hacen su propio `git -C
+# "$ruta" commit`—, así que lo que no puede existir es la ruta vacía.
+d=$(montar)
+ruta=$(abrir "$d" main 2>/dev/null) && fallo=0 || fallo=1
+afirmar "abrir se niega con un nombre inválido"  test "$fallo" = 1
+negar   "y NO devuelve una ruta vacía"           test -z "$ruta"
+negar   "ni una que git -C pueda confundir con «aquí»" test -d "$ruta"
+
 caso "abrir-rama.sh: lo que tiene que salir bien"
 d=$(montar)
 ruta=$(abrir "$d" la-rama 2>/dev/null)
@@ -548,27 +613,118 @@ afirmar "y la rama sigue SIN fusionar"      hay_rama "$d" en-pruebas
 afirmar "y su worktree sigue en pie"        hay_worktree "$d" en-pruebas
 afirmar "y la rama remota sigue viva"       hay_remota "$d" en-pruebas
 
-caso "probar-rama.sh: sin verde no levanta nada"
+caso "probar-rama.sh: la pila NO se levanta sola"
+# Levantar una pila construye imágenes, clona el volumen de datos y ocupa un
+# puerto. Hasta el 14-08-2026 pasaba solo, en cada verde, mirase el usuario la
+# rama o no. Ahora se pide, y el defecto es no tocar nada.
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" sin-pedirla 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" sin-pedirla >/dev/null 2>&1
+msg=$(probar_rama verde "$d" sin-pedirla 2>&1) && salio=0 || salio=1
+afirmar "sin banderas sale bien"            test "$salio" = 0
+afirmar "y no levanta absolutamente nada"   test -z "$(registro "$d" docker.log)"
+afirmar "da la URL de la PR"                contiene "PR:      https://example.test/pr/1" "$msg"
+afirmar "y dice cómo levantarla luego"      contiene "probar-rama.sh sin-pedirla --solo-pila" "$msg"
+afirmar "la rama sigue sin fusionar"        hay_rama "$d" sin-pedirla
+# El aviso del sistema era el final de la pila, y la pila ha dejado de ser el
+# final. Sin esto, el camino que la skill manda lanzar con `run_in_background`
+# —y que en welzy tarda doce minutos— termina sin que suene nada.
+afirmar "y avisa por el sistema al acabar"  contiene "Lista para mirar la PR" "$(registro "$d" avisos.log)"
+
+caso "probar-rama.sh: el veredicto del CI manda también sin pila"
+# Los dos casos de abajo llevaban `--con-pila` desde que se partió la bandera, y
+# con eso el camino POR DEFECTO —el que se usa siempre— dejó de probar que un CI
+# en rojo sale con error. Un rojo que saliera con 0 diría «la PR está esperando»
+# de una rama rota, y de ahí se va derecho a cerrar-rama.sh.
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" rojo-por-defecto 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" rojo-por-defecto >/dev/null 2>&1
+msg=$(probar_rama rojo "$d" rojo-por-defecto 2>&1) && rojo=0 || rojo=1
+afirmar "CI en rojo y sin banderas: sale con error" test "$rojo" = 1
+afirmar "y aun así da la URL de la PR"      contiene "PR:      https://example.test/pr/1" "$msg"
+afirmar "y avisa por el sistema"            contiene "El CI no está verde" "$(registro "$d" avisos.log)"
+
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" sin-checks-por-defecto 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" sin-checks-por-defecto >/dev/null 2>&1
+msg=$(probar_rama sin-checks "$d" sin-checks-por-defecto 2>&1) && sc=0 || sc=1
+afirmar "sin checks y sin banderas: sale bien"  test "$sc" = 0
+afirmar "y también da la URL de la PR"      contiene "PR:      https://example.test/pr/1" "$msg"
+
+caso "probar-rama.sh: sin verde no levanta nada, aunque se pida"
 d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" rojo-no-levanta 2>/dev/null); trabajar "$ruta" uno
 revisar "$d" rojo-no-levanta >/dev/null 2>&1
-negar   "CI en rojo: sale con error"        probar_rama rojo "$d" rojo-no-levanta
+negar   "CI en rojo: sale con error"        probar_rama rojo "$d" rojo-no-levanta --con-pila
 afirmar "y no ha levantado ninguna pila"    no_contiene "up -d --build" "$(registro "$d" docker.log)"
 
 d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" sin-checks-no-levanta 2>/dev/null); trabajar "$ruta" uno
 revisar "$d" sin-checks-no-levanta >/dev/null 2>&1
-afirmar "sin checks: sale bien…"            probar_rama sin-checks "$d" sin-checks-no-levanta
+afirmar "sin checks: sale bien…"            probar_rama sin-checks "$d" sin-checks-no-levanta --con-pila
 afirmar "…pero tampoco levanta nada"        no_contiene "up -d --build" "$(registro "$d" docker.log)"
 
-caso "probar-rama.sh: en verde, levanta la pila de LA RAMA"
+caso "probar-rama.sh: donde no hay pila, no se ofrece levantarla"
+# Es el caso de dotfiles, que no tiene docker-compose.yml — o sea el repositorio
+# donde este guión más corre. Ofrecía `--solo-pila` en cada pasada, y ese comando
+# solo sabe contestar que aquí no hay nada que levantar.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" sin-compose 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" sin-compose >/dev/null 2>&1
+msg=$(probar_rama verde "$d" sin-compose 2>&1) && sinc=0 || sinc=1
+afirmar "sale bien"                         test "$sinc" = 0
+negar   "NO ofrece --solo-pila"             contiene "--solo-pila" "$msg"
+afirmar "y dice por qué no hay pila"        contiene "no hay docker-compose.yml" "$msg"
+afirmar "pero sí da la URL de la PR"        contiene "PR:      https://example.test/pr/1" "$msg"
+
+# Y si se pide la pila donde no la hay, se dice y se sale bien: no es un fallo.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" pedida-sin-compose 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" pedida-sin-compose >/dev/null 2>&1
+msg=$(probar_rama verde "$d" pedida-sin-compose --con-pila 2>&1) && psc=0 || psc=1
+afirmar "--con-pila sin compose sale bien"  test "$psc" = 0
+afirmar "y lo explica"                      contiene "no hay pila que levantar" "$msg"
+afirmar "sin intentar levantar nada"        test -z "$(registro "$d" docker.log)"
+
+caso "probar-rama.sh: con --con-pila y en verde, levanta la de LA RAMA"
 d=$(montar); con_workflow "$d"; con_compose "$d"
-ruta=$(abrir "$d" con-pila 2>/dev/null); trabajar "$ruta" uno
-revisar "$d" con-pila >/dev/null 2>&1
-negar   "sin nadie escuchando, acaba diciéndolo" probar_rama verde "$d" con-pila
+ruta=$(abrir "$d" pila-pedida 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" pila-pedida >/dev/null 2>&1
+negar   "sin nadie escuchando, acaba diciéndolo" probar_rama verde "$d" pila-pedida --con-pila
 log=$(registro "$d" docker.log)
-afirmar "levantó un proyecto propio, no el de siempre" contiene "compose -p repo-con-pila up -d --build" "$log"
-afirmar "y la rama sigue sin fusionar"      hay_rama "$d" con-pila
+afirmar "levantó un proyecto propio, no el de siempre" contiene "compose -p repo-pila-pedida up -d --build" "$log"
+afirmar "y la rama sigue sin fusionar"      hay_rama "$d" pila-pedida
+
+caso "probar-rama.sh: --solo-pila levanta y no toca nada más"
+# El camino de «dije que no y he cambiado de idea». Lo caro de ese camino sería
+# volver a empujar, reabrir la PR y esperar un CI que ya pasó hace diez minutos.
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" me-lo-he-pensado 2>/dev/null); trabajar "$ruta" uno
+RESPONDE=1
+msg=$(probar_rama rojo "$d" me-lo-he-pensado --solo-pila 2>&1) && solo=0 || solo=1
+RESPONDE=0
+afirmar "sale bien aunque el CI esté en rojo"  test "$solo" = 0
+afirmar "levanta la pila"                      contiene "compose -p repo-me-lo-he-pensado up -d --build" "$(registro "$d" docker.log)"
+afirmar "y da la URL de la pila"               contiene "Lista para probar:  http://127.0.0.1:" "$msg"
+negar   "no empuja la rama"                    hay_remota "$d" me-lo-he-pensado
+# Sin haber empujado no hay PR, y ahí el hueco se dice con palabras en vez de
+# dejar un «PR:» pelado al final de un mensaje que por lo demás sale bien.
+afirmar "y dice que todavía no hay PR"         contiene "PR:      todavía no hay ninguna" "$msg"
+
+# El árbol sucio para una PR, no una pila. Y en el flujo nuevo llega sucio casi
+# siempre: entre el «no» y el «bueno, va» ha corrido el revisor, y `--fix` deja
+# sus arreglos en el árbol de trabajo. Frenar aquí era negarle al usuario lo
+# único que acababa de pedir, y ofrecerle un `--forzar` que dice tirar cambios
+# que este guión no tira.
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" sucia-pero-solo-pila 2>/dev/null); trabajar "$ruta" uno
+printf 'lo que acaba de dejar el revisor\n' > "$ruta/a-medias.txt"
+RESPONDE=1
+afirmar "--solo-pila levanta con el árbol sucio" \
+        probar_rama verde "$d" sucia-pero-solo-pila --solo-pila
+RESPONDE=0
+afirmar "y la levanta de verdad"               contiene "up -d --build" "$(registro "$d" docker.log)"
+afirmar "sin tocar lo que había sin guardar"   test -f "$ruta/a-medias.txt"
 
 # ════════════════════════════════════════════════════════════════════════════
 caso "probar-rama.sh: verificar.sh manda, y manda antes que el CI"
@@ -680,10 +836,15 @@ d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" clona-el-volumen 2>/dev/null); trabajar "$ruta" uno
 revisar "$d" clona-el-volumen >/dev/null 2>&1
 VOLUMENES="repo_postgres-data"; RESPONDE=1
-afirmar "con la pila arriba, sale bien"     probar_rama verde "$d" clona-el-volumen
+msg=$(probar_rama verde "$d" clona-el-volumen --con-pila 2>&1) && clon=0 || clon=1
+afirmar "con la pila arriba, sale bien"     test "$clon" = 0
 log=$(registro "$d" docker.log)
 afirmar "crea el volumen de LA RAMA" \
         contiene "volume create repo-clona-el-volumen_postgres-data" "$log"
+# El mensaje contaba SIEMPRE que los datos eran «copia de <volumen>», también
+# cuando no había copiado ninguno. Aquí sí ha copiado, y es donde toca decirlo.
+afirmar "y lo cuenta: los datos son una copia" \
+        contiene "datos:   copia de repo_postgres-data; tu pila de siempre no se ha tocado" "$msg"
 afirmar "y copia dentro los datos de tu volumen de siempre" \
         contiene "run --rm -v repo_postgres-data:/de -v repo-clona-el-volumen_postgres-data:/a" "$log"
 afirmar "tu volumen nunca se escribe: solo se lee" \
@@ -694,7 +855,7 @@ d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" ya-tenia-datos 2>/dev/null); trabajar "$ruta" uno
 revisar "$d" ya-tenia-datos >/dev/null 2>&1
 VOLUMENES="repo_postgres-data,repo-ya-tenia-datos_postgres-data"; RESPONDE=1
-afirmar "si la rama ya tenía datos, sale bien"  probar_rama verde "$d" ya-tenia-datos
+afirmar "si la rama ya tenía datos, sale bien"  probar_rama verde "$d" ya-tenia-datos --con-pila
 log=$(registro "$d" docker.log)
 afirmar "…y no los pisa: ni crea"           no_contiene "volume create" "$log"
 afirmar "…ni vuelve a copiar"               no_contiene "run --rm" "$log"
@@ -708,10 +869,13 @@ d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" pila-viva 2>/dev/null); trabajar "$ruta" uno
 revisar "$d" pila-viva >/dev/null 2>&1
 RESPONDE=1
-msg=$(probar_rama verde "$d" pila-viva 2>&1) && vivo=0 || vivo=1
+msg=$(probar_rama verde "$d" pila-viva --con-pila 2>&1) && vivo=0 || vivo=1
 afirmar "sale bien"                          test "$vivo" = 0
 afirmar "dice dónde probarlo"                contiene "Lista para probar:  http://127.0.0.1:" "$msg"
-afirmar "recuerda que los datos son una copia" contiene "tu pila de siempre no se ha tocado" "$msg"
+# Aquí no hay ningún volumen que clonar, y el mensaje lo dice en vez de prometer
+# una copia que no existe: la frase «copia de <volumen>» salía igual con la base
+# vacía, que es justo cuando importa saberlo antes de mirar la app y no después.
+afirmar "y no promete una copia que no hizo" contiene "datos:   vacíos" "$msg"
 afirmar "y remite a cerrar-rama.sh, no cierra él" contiene "cerrar-rama.sh pila-viva" "$msg"
 avisos=$(registro "$d" avisos.log)
 afirmar "avisa por el sistema con la URL"    contiene "Lista para probar en http://127.0.0.1:" "$avisos"
@@ -728,7 +892,7 @@ printf 'CLAVE=secreta\n' > "$d/repo/.env"
 ruta=$(abrir "$d" con-env 2>/dev/null); trabajar "$ruta" uno
 revisar "$d" con-env >/dev/null 2>&1
 RESPONDE=1
-probar_rama verde "$d" con-env >/dev/null 2>&1
+probar_rama verde "$d" con-env --con-pila >/dev/null 2>&1
 afirmar "el worktree acaba teniendo su .env"  test -L "$ruta/.env"
 afirmar "y es un enlace al de la raíz"        test "$(readlink "$ruta/.env")" = "$d/repo/.env"
 RESPONDE=0
@@ -738,7 +902,7 @@ d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" puerto-propio 2>/dev/null); trabajar "$ruta" uno
 revisar "$d" puerto-propio >/dev/null 2>&1
 RESPONDE=1
-probar_rama verde "$d" puerto-propio >/dev/null 2>&1
+probar_rama verde "$d" puerto-propio --con-pila >/dev/null 2>&1
 afirmar "usa el puerto que le toca a esta rama" \
         contiene "WEB_BIND_PORT=$(puerto_esperado puerto-propio) " "$(registro "$d" docker.log)"
 RESPONDE=0
@@ -747,25 +911,59 @@ d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" puerto-pillado 2>/dev/null); trabajar "$ruta" uno
 revisar "$d" puerto-pillado >/dev/null 2>&1
 RESPONDE=1; PUERTOS_PILLADOS=3
-probar_rama verde "$d" puerto-pillado >/dev/null 2>&1
+probar_rama verde "$d" puerto-pillado --con-pila >/dev/null 2>&1
 afirmar "si está ocupado, se corre al siguiente libre" \
         contiene "WEB_BIND_PORT=$(( $(puerto_esperado puerto-pillado) + 3 )) " "$(registro "$d" docker.log)"
 RESPONDE=0; PUERTOS_PILLADOS=0
 
-caso "probar-rama.sh: --sin-ci, --sin-pila y el árbol sucio"
+caso "probar-rama.sh: --sin-ci y el árbol sucio"
 d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" sin-esperar 2>/dev/null); trabajar "$ruta" uno
 revisar "$d" sin-esperar >/dev/null 2>&1
 RESPONDE=1
-afirmar "--sin-ci levanta la pila con el CI en rojo" probar_rama rojo "$d" sin-esperar --sin-ci
+afirmar "--sin-ci --con-pila levanta con el CI en rojo" \
+        probar_rama rojo "$d" sin-esperar --sin-ci --con-pila
 afirmar "…y la levanta de verdad"           contiene "up -d --build" "$(registro "$d" docker.log)"
 RESPONDE=0
 
+# Sin pila, `--sin-ci` sigue siendo lo que dice: empuja, abre la PR y no espera.
 d=$(montar); con_workflow "$d"; con_compose "$d"
-ruta=$(abrir "$d" solo-la-pr 2>/dev/null); trabajar "$ruta" uno
-revisar "$d" solo-la-pr >/dev/null 2>&1
-afirmar "--sin-pila abre la PR y para"      probar_rama verde "$d" solo-la-pr --sin-pila
-afirmar "y no levanta nada"                 test -z "$(registro "$d" docker.log)"
+ruta=$(abrir "$d" sin-esperar-ni-pila 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" sin-esperar-ni-pila >/dev/null 2>&1
+msg=$(probar_rama rojo "$d" sin-esperar-ni-pila --sin-ci 2>&1) && snp=0 || snp=1
+afirmar "--sin-ci a secas abre la PR y para" test "$snp" = 0
+afirmar "y no levanta nada"                  test -z "$(registro "$d" docker.log)"
+afirmar "pero sí ha empujado"                hay_remota "$d" sin-esperar-ni-pila
+# «Verde» solo si alguien ha mirado: con --sin-ci nadie ha preguntado por un
+# solo check, y este mensaje llegó a decirlo de verdad sobre una PR en rojo.
+negar   "con --sin-ci no dice que esté verde" contiene "está verde" "$msg"
+afirmar "y dice que el CI está sin mirar"     contiene "sin mirar" "$msg"
+
+caso "probar-rama.sh: lo que se contradice se rechaza, y se explica"
+# Todo esto muere en el bucle de argumentos, antes de mirar el repositorio, así
+# que comparten el montaje del caso de arriba: montar uno nuevo son veinticinco
+# procesos de git para probar un `case` de bash.
+#
+# Y se comprueba el MENSAJE, no solo que salga con error: mientras solo se
+# miraba el código de salida, quitar entero el `-*) morir "Opción desconocida"`
+# dejaba la matriz en verde —el argumento caía en «Sobra un argumento»—, o sea
+# que el caso pasaba sin que el guión dijera nada de lo que dice el commit.
+msg=$(probar_rama verde "$d" bandera-vieja --sin-pila 2>&1) && vieja=0 || vieja=1
+afirmar "--sin-pila ya no existe"           test "$vieja" = 1
+afirmar "y dice que no la conoce"           contiene "Opción desconocida: --sin-pila" "$msg"
+
+msg=$(probar_rama verde "$d" combo --con-pila --solo-pila 2>&1) && combo=0 || combo=1
+afirmar "--con-pila con --solo-pila se rechaza"  test "$combo" = 1
+afirmar "y explica en qué se diferencian"        contiene "piden cosas distintas" "$msg"
+
+msg=$(probar_rama verde "$d" combo2 --solo-pila --sin-ci 2>&1) && combo2=0 || combo2=1
+afirmar "--solo-pila con --sin-ci se rechaza"    test "$combo2" = 1
+afirmar "y dice que sobra"                       contiene "sobra: --sin-ci" "$msg"
+
+# Y lo mismo con los frenos de antes del push, que `--solo-pila` tampoco toca.
+msg=$(probar_rama verde "$d" combo3 --solo-pila --sin-revisar 2>&1) && combo3=0 || combo3=1
+afirmar "--solo-pila con --sin-revisar se rechaza" test "$combo3" = 1
+afirmar "y dice cuál sobra"                        contiene "sobra: --sin-revisar" "$msg"
 
 d=$(montar); con_workflow "$d"
 ruta=$(abrir "$d" sucia-al-probar 2>/dev/null); trabajar "$ruta" uno
@@ -831,8 +1029,11 @@ afirmar "ni la rama"                           hay_rama "$d" main-que-no-para
 caso "cerrar-rama.sh: se lleva la pila de la rama, con sus volúmenes"
 d=$(montar); con_workflow "$d"; con_compose "$d"
 ruta=$(abrir "$d" con-pila-que-cerrar 2>/dev/null); trabajar "$ruta" uno
+PILAS="repo-con-pila-que-cerrar"
 VOLUMENES="repo_postgres-data,repo-con-pila-que-cerrar_postgres-data"
-afirmar "cierra"                            cerrar verde "$d" con-pila-que-cerrar
+msg=$(cerrar verde "$d" con-pila-que-cerrar 2>&1) && cerro=0 || cerro=1
+PILAS=""
+afirmar "cierra"                            test "$cerro" = 0
 log=$(registro "$d" docker.log)
 afirmar "tumbó la pila de la rama con --volumes" \
         contiene "compose -p repo-con-pila-que-cerrar down --volumes" "$log"
@@ -842,6 +1043,7 @@ afirmar "y borra a mano el volumen de la copia, que el down no se lleva" \
         contiene "volume rm repo-con-pila-que-cerrar_postgres-data" "$log"
 afirmar "TU volumen de siempre no se toca" \
         no_contiene "volume rm repo_postgres-data" "$log"
+afirmar "y lo dice"                         contiene "sin pila" "$msg"
 VOLUMENES=""
 
 # El riesgo que introduce barrer por prefijo: dos ramas cuyo nombre empieza igual.
@@ -866,6 +1068,16 @@ negar   "cierra igual: la fusión ya ocurrió"  hay_rama "$d" volumen-atascado
 afirmar "pero avisa de que el volumen sigue ahí" \
         contiene "no he podido borrar el volumen repo-volumen-atascado_postgres-data" "$msg"
 VOLUMENES=""; VOLUMEN_ATASCADO=0
+
+# Y donde nunca hubo pila —lo normal desde que levantarla se pide— no se presume
+# una limpieza que no ha ocurrido: `ps -aq` no ve contenedores, el barrido no ve
+# volúmenes, y el mensaje final tiene que decirlo en vez de cantar «sin pila».
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" nunca-hubo-pila 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" nunca-hubo-pila >/dev/null 2>&1
+msg=$(cerrar verde "$d" nunca-hubo-pila 2>&1) && nhp=0 || nhp=1
+afirmar "sin pila que tumbar, cierra igual"  test "$nhp" = 0
+afirmar "y no presume de haberla tumbado"    contiene "no había pila" "$msg"
 
 echo
 if [ "$fallos" -eq 0 ]; then

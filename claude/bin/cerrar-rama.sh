@@ -3,9 +3,10 @@
 # despliega a producción, y limpia la pila local, el worktree y las dos ramas.
 # Se lanza DESDE LA RAÍZ, nunca desde dentro del worktree que va a borrar.
 #
-# Este es el segundo tiempo. El primero es `probar-rama.sh`, que levanta la rama
-# en local y para. Hasta el 13-08-2026 esto era un solo comando que fusionaba en
-# cuanto el CI se ponía verde, y el visto bueno humano no cabía en ninguna parte.
+# Este es el segundo tiempo. El primero es `probar-rama.sh`, que deja la PR
+# verde y para —y levanta la pila local solo si se la pidieron—. Hasta el
+# 13-08-2026 esto era un solo comando que fusionaba en cuanto el CI se ponía
+# verde, y el visto bueno humano no cabía en ninguna parte.
 #
 # Por qué el borrado va a mano y en un orden fijo: `gh pr merge --delete-branch`
 # parece hacerlo solo, y lo que hace es fusionar en GitHub y luego fallar en
@@ -129,12 +130,20 @@ fi
 # Con sus volúmenes: son una copia desechable que hizo probar-rama.sh. El
 # volumen de tu pila de siempre nunca se toca — tiene otro nombre de proyecto.
 proyecto=$(proyecto_de_rama)
+hubo_pila=0
 if $DOCKER compose -p "$proyecto" ps -q >/dev/null 2>&1 &&
    [ -n "$($DOCKER compose -p "$proyecto" ps -aq 2>/dev/null)" ]; then
   paso "tumbo la pila $proyecto y sus volúmenes de copia"
   $DOCKER compose -p "$proyecto" down --volumes >&2 || true
+  hubo_pila=1
 fi
 
+# El barrido de abajo va aparte del `down` a propósito, y no solo porque Compose
+# no se lleve lo que no creó: los contenedores se pueden haber ido sin el volumen
+# —un `down` a secas, un `up --build` que se cayó construyendo— y entonces
+# `ps -aq` no ve nada y el bloque de arriba ni corre. Desde que la pila se levanta
+# con `--solo-pila`, sin CI de por medio, ese estado dejó de ser raro.
+#
 # Y **después del `down`, a mano**, porque `--volumes` no basta: solo se lleva
 # los volúmenes que creó Compose, y el de datos no es suyo. Lo crea
 # `probar-rama.sh` con `docker volume create` antes de levantar nada, que es la
@@ -165,6 +174,7 @@ fi
 # pasa por un `tr -cd '[:alnum:]-'`.
 sobrantes=$($DOCKER volume ls -q --filter "name=^${proyecto}_" 2>/dev/null || true)
 if [ -n "$sobrantes" ]; then
+  hubo_pila=1
   paso "borro los volúmenes de copia que el down no se lleva"
   # Y si alguno no se deja borrar se dice, en vez de dar el paso por hecho: un
   # `|| true` aquí sería otra vez el mismo fallo que este cambio arregla —
@@ -229,4 +239,10 @@ elif [ "$hubo_remoto" = 1 ]; then
   git -C "$raiz" pull --ff-only --quiet
 fi
 
-aviso "" "Cerrada '$rama': sin pila, sin worktree, sin rama local y sin rama remota."
+# Decir «sin pila» cuando nunca hubo pila es afirmar una limpieza que no ocurrió,
+# y desde que levantar es opcional el caso normal es que no la hubiera.
+if [ "$hubo_pila" = 1 ]; then
+  aviso "" "Cerrada '$rama': sin pila, sin worktree, sin rama local y sin rama remota."
+else
+  aviso "" "Cerrada '$rama': sin worktree, sin rama local y sin rama remota (no había pila)."
+fi

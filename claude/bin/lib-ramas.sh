@@ -214,6 +214,16 @@ empujar_y_abrir_pr() {
   numero=$($GH pr view "$rama" --json number --jq .number)
 }
 
+# Deja `url_pr` puesta con la URL de la PR, o vacía si no hay ninguna. Se llama
+# como una orden y no dentro de `$( )`: una asignación hecha en una sustitución
+# de órdenes vive en un subshell y se pierde al volver, así que preguntar «dame
+# la URL» tantas veces como líneas la mencionan costaba una llamada de red por
+# línea. Tolera que no haya PR porque `probar-rama.sh --solo-pila` levanta una
+# pila local de una rama que a lo mejor no se ha empujado nunca.
+recordar_url_pr() {
+  url_pr=$($GH pr view "$rama" --json url --jq .url 2>/dev/null || true)
+}
+
 # ── El CI ───────────────────────────────────────────────────────────────────
 # ¿Hay algún workflow que se dispare con las PRs? YAML deja escribir el `on:` de
 # cuatro maneras y hasta el 13-08-2026 esto solo reconocía una, la de mapa. Con

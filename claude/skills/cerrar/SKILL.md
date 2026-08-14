@@ -7,8 +7,8 @@ description: Cierra una rama que el usuario YA ha probado, con ~/.claude/bin/cer
 
 **Esto fusiona y despliega a producción. No lo lances por tu cuenta**: solo
 cuando el usuario lo pida con todas las letras. Antes va la skill `probar`, que
-levanta la rama en local para que la mire; el visto bueno es que te diga que
-cierres.
+deja la PR verde y esperando —y la pila local levantada, si el usuario dijo que
+quería probarla ahí—; el visto bueno es que te diga que cierres.
 
 Dos pasos, en este orden:
 
