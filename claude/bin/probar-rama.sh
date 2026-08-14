@@ -85,9 +85,18 @@ fi
 [ "$sin_pila" != 1 ] || { aviso "" "Listo. La PR es $($GH pr view "$numero" --json url --jq .url)"; exit 0; }
 
 # ── La pila de la rama ──────────────────────────────────────────────────────
+# «Verde» solo si alguien ha mirado. Con `--sin-ci` este mensaje decía «La PR
+# está verde y esperando» sin haber preguntado por un solo check, y lo dijo de
+# verdad el 14-08-2026 sobre una PR cuyo CI estaba en rojo. Afirmar un verde que
+# no se ha comprobado es la única cosa que ninguno de estos guiones puede hacer.
 [ -f "$ruta_wt/docker-compose.yml" ] || {
+  if [ "$sin_ci" = 1 ]; then
+    estado_ci="y su CI sin mirar, porque me lo has pedido con --sin-ci"
+  else
+    estado_ci="verde"
+  fi
   aviso "" 'Aquí no hay docker-compose.yml: no hay pila que levantar.' \
-           "La PR está verde y esperando: $($GH pr view "$numero" --json url --jq .url)"
+           "La PR está $estado_ci: $($GH pr view "$numero" --json url --jq .url)"
   exit 0
 }
 

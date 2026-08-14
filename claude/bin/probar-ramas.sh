@@ -604,6 +604,21 @@ msg=$(probar_rama verde "$d" nada-que-empujar 2>&1) || true
 afirmar "una rama vacía se para por vacía…"      contiene "ningún commit" "$msg"
 negar   "…y no llega a lanzar el verificar.sh"   test -f "$d/estado/verificar.cwd"
 
+# Y sin pila que levantar, el mensaje final no puede cantar un verde que nadie ha
+# mirado. Pasó de verdad el 14-08-2026: `--sin-ci` sobre una PR con el CI en rojo
+# despidiéndose con «La PR está verde y esperando».
+caso "probar-rama.sh: --sin-ci no puede decir «verde»"
+d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" verde-sin-mirar 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" verde-sin-mirar >/dev/null 2>&1
+msg=$(probar_rama rojo "$d" verde-sin-mirar --sin-ci 2>&1)
+negar   "con --sin-ci no dice que esté verde"    contiene "está verde" "$msg"
+afirmar "y dice que el CI está sin mirar"        contiene "sin mirar" "$msg"
+
+d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" verde-mirado 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" verde-mirado >/dev/null 2>&1
+msg=$(probar_rama verde "$d" verde-mirado 2>&1)
+afirmar "habiendo esperado al CI, sí lo dice"    contiene "está verde" "$msg"
+
 caso "probar-rama.sh: sin revisar no hay PR"
 # La PR tiene que nacer con lo que el revisor haya dicho ya dentro.
 d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" sin-revisar 2>/dev/null); trabajar "$ruta" uno
