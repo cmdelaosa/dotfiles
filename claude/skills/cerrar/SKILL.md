@@ -1,6 +1,6 @@
 ---
 name: cerrar
-description: Cierra una rama que el usuario YA ha probado, con ~/.claude/bin/cerrar-rama.sh - fusiona la PR, despliega a producción y borra la pila local, el worktree y las dos ramas. Usar solo cuando el usuario lo pida con "cierra", "fusiona", "dale el visto bueno" o "/cerrar".
+description: Cierra una rama que el usuario YA ha probado, con ~/.claude/bin/cerrar-rama.sh - fusiona la PR, despliega a producción y borra la pila local, el worktree y las dos ramas. En una rama de solo markdown se cierra con --solo-md, que ni despliega ni exige checks. Usar solo cuando el usuario lo pida con "cierra", "fusiona", "dale el visto bueno" o "/cerrar".
 ---
 
 # Cerrar una rama
@@ -9,6 +9,11 @@ description: Cierra una rama que el usuario YA ha probado, con ~/.claude/bin/cer
 cuando el usuario lo pida con todas las letras. Antes va la skill `probar`, que
 deja la PR verde y esperando —y la pila local levantada, si el usuario dijo que
 quería probarla ahí—; el visto bueno es que te diga que cierres.
+
+**En una rama de solo markdown el visto bueno se pide en el momento**, y lo pide
+la propia cadena: la skill `probar` acaba preguntando *¿la fusiono?* con la PR
+delante, y su sí es este cierre. Ahí va `--solo-md`, que además de no desplegar
+fusiona aunque la PR no haya disparado ningún check.
 
 Dos pasos, en este orden:
 
@@ -26,13 +31,22 @@ si el repositorio tiene ese contrato, tumba la pila de la rama con sus volúmene
 de copia y borra worktree, rama local y rama remota.
 
 `--sin-desplegar` fusiona y limpia sin tocar producción. `--solo-limpiar` es para
-cuando la PR ya se fusionó por otro camino.
+cuando la PR ya se fusionó por otro camino. `--solo-md` es el cierre de una rama
+de documentación: no despliega —escribir además `--sin-desplegar` se rechaza,
+porque sugiere que sin él sí desplegaría—, no se planta ante un «sin checks», y
+comprueba por su cuenta que el diff contra `main` no tenga un solo fichero que no
+acabe en `.md`.
 
 ## Cómo leer lo que diga
 
 - **«El CI no está verde»** → enseña los jobs. No ha fusionado ni borrado nada.
+  Un rojo frena también con `--solo-md`: el atajo dice que la prosa no necesita
+  examen propio, no que se fusione por encima de uno suspendido.
 - **«no ha disparado ningún check»** → la PR queda abierta a propósito; fusionarla
   sin checks lo decide el usuario. Luego: `cerrar-rama.sh <rama> --solo-limpiar`.
+  Con `--solo-md` esto no llega a salir: fusiona y lo dice.
+- **«toca ficheros que no son markdown»** → el `--solo-md` estaba mal puesto. No
+  ha fusionado ni borrado nada; lee la lista y lleva la rama por la cadena entera.
 - **«OJO: el despliegue ha fallado»** → **la PR sí está fusionada** y producción
   sigue con lo anterior. Pega la salida entera y para; no reintentes solo.
 - **«El worktree tiene cambios sin guardar»** → lista los ficheros. `--forzar` los

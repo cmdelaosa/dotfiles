@@ -176,6 +176,72 @@ exigir_revision() {                     # exigir_revision <sin_revisar>
     "  Saltárselo:       probar-rama.sh $rama --sin-revisar"
 }
 
+# ── El atajo de solo markdown ───────────────────────────────────────────────
+# Un cambio que solo toca `.md` no ejecuta nada: no hay lint que romper, ni
+# tipos, ni pruebas que pasen de verdes a rojas, y la revisión a `max` se gasta
+# leyendo prosa. `--solo-md` se salta los dos frenos de antes del push y, al
+# cerrar, el despliegue.
+#
+# Lo que NO se salta es esta comprobación, y ese es todo el diseño: la bandera
+# no se cree lo que le digan. Mira el diff de la rama contra el principal y se
+# niega si asoma un fichero que no acabe en `.md`. Un atajo que se concede a sí
+# mismo quien lo pide es un atajo que se pide el día que no tocaba —y aquí quien
+# lo pide es un agente que acaba de decidir, él solo, que lo suyo «es solo
+# documentación».
+#
+# `--no-renames` a propósito: con detección de renombrados, `git diff
+# --name-only` imprime solo el destino, así que un `guion.sh → guion.md` pasaría
+# por markdown puro cuando lo que ha ocurrido es que se ha borrado un guión.
+#
+# El estricto es el bueno: `.txt`, un `.png` de docs o un `LICENSE` sin
+# extensión caen del lado de la cadena entera. La regla se explica en una frase
+# —«si un fichero no acaba en .md, no hay atajo»— y una regla con lista de
+# excepciones deja de poder explicarse a la tercera excepción.
+# `core.quotePath=false` porque de serie git escapa las rutas no ASCII y las
+# entrecomilla —`claude/skills/diseño.md` sale como `"dise\303\261o.md"`—, y eso
+# no acaba en `.md`: un fichero con un acento en el nombre tumbaba el atajo
+# diciendo que no era markdown.
+#
+# Y la salida de git se recoge ANTES de filtrarla, con su código de salida
+# mirado, porque el `|| true` que necesita el `grep` —que sale 1 cuando no
+# encuentra nada, que aquí es el caso bueno— se tragaba también un `git diff`
+# roto. Una base que no se puede resolver dejaba la lista vacía, y una lista
+# vacía es exactamente lo que este freno lee como «todo es markdown»: fallar
+# hacia el lado permisivo es no tener freno los días raros.
+diff_no_md() {                          # diff_no_md → imprime lo que no es .md
+  local base="$principal" tocados
+  if [ "$hubo_remoto" = 1 ]; then
+    base="origin/$principal"
+    [ "${ya_traido:-0}" = 1 ] || {
+      git -C "$raiz" fetch origin --quiet --prune
+      ya_traido=1
+    }
+  fi
+  tocados=$(git -C "$raiz" -c core.quotePath=false \
+              diff --name-only --no-renames "$base...$rama") || return 1
+  printf '%s' "$tocados" | grep -v '\.md$' || true
+}
+
+exigir_solo_md() {                      # exigir_solo_md <qué-se-salta>
+  local sobran base_dicha="$principal"
+  [ "$hubo_remoto" != 1 ] || base_dicha="origin/$principal"
+  # La declaración y la asignación van por separado a propósito: en
+  # `local sobran=$(…)` el código de salida que se ve es el del `local`, que
+  # siempre es 0, así que el fallo de dentro se perdería justo aquí.
+  sobran=$(diff_no_md) ||
+    morir "No he podido comparar '$rama' con $base_dicha," \
+          "así que no puedo saber si esto es solo markdown. No sigo." \
+          "Un freno que no sabe responder tiene que decir que no."
+  if [ -n "$sobran" ]; then
+    aviso "--solo-md, pero esta rama toca ficheros que no son markdown:" ""
+    printf '%s\n' "$sobran" | sed 's/^/    /' >&2
+    morir "" \
+      "Eso no es documentación: lleva la cadena entera —verificar.sh, revisión" \
+      "a max y, al cerrar, el despliegue—. Quítale el --solo-md."
+  fi
+  paso "solo markdown: ${1:-me salto los frenos}"
+}
+
 # ── La PR ───────────────────────────────────────────────────────────────────
 # Lo único que hace falta saber ANTES de gastar tiempo en verificar y en revisar:
 # que haya algo que empujar. Vivía dentro de `empujar_y_abrir_pr`, o sea DESPUÉS

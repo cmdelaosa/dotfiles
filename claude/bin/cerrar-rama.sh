@@ -28,29 +28,45 @@ set -Eeuo pipefail
 
 DESPLEGAR="${DESPLEGAR:-$HOME/Projects/cmdlo-infra/desplegar.sh}"
 
-rama_arg=""; forzar=0; solo_limpiar=0; sin_desplegar=0
+rama_arg=""; forzar=0; solo_limpiar=0; sin_desplegar=0; solo_md=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --forzar)        forzar=1 ;;
     --solo-limpiar)  solo_limpiar=1 ;;
     --sin-desplegar) sin_desplegar=1 ;;
+    --solo-md)       solo_md=1 ;;
     -h | --help)
-      morir "Uso: cerrar-rama.sh [<rama>] [--forzar] [--solo-limpiar] [--sin-desplegar]" \
+      morir "Uso: cerrar-rama.sh [<rama>] [--forzar] [--solo-limpiar]" \
+        "                        [--sin-desplegar] [--solo-md]" \
         "" \
         "  <rama>            la que se cierra. Por defecto, la del directorio actual." \
         "  --forzar          cierra aunque haya cambios sin guardar. Los tira." \
         "  --solo-limpiar    no fusiona ni despliega: da por hecho que la PR ya" \
         "                    está fusionada y solo quita pila, worktree y ramas." \
-        "  --sin-desplegar   fusiona y limpia, pero no toca producción." ;;
+        "  --sin-desplegar   fusiona y limpia, pero no toca producción." \
+        "  --solo-md         rama de solo markdown: no despliega, y un «sin" \
+        "                    checks» no le impide fusionar. Se niega si el diff" \
+        "                    toca algo que no acabe en .md." ;;
     -*) morir "Opción desconocida: $1" ;;
     *)  [ -z "$rama_arg" ] || morir "Sobra un argumento: $1"; rama_arg="$1" ;;
   esac
   shift
 done
 
+# `--solo-md` ya implica no desplegar. Escribir los dos hace pensar que el
+# despliegue seguiría vivo sin el segundo, que es exactamente lo contrario.
+[ "$solo_md$sin_desplegar" != 11 ] ||
+  morir "--solo-md ya no despliega nada; sobra --sin-desplegar."
+
 resolver_repo "$rama_arg" cerrar
 exigir_estar_fuera
 exigir_arbol_limpio "$forzar"
+
+# Antes de fusionar nada, y también con `--solo-limpiar`: la bandera se comprueba
+# siempre contra el diff, porque su valor entero está en que no se la pueda
+# conceder quien la escribe. Con la rama ya fusionada el diff sale vacío y esto
+# pasa solo, que es lo correcto — no hay nada que no sea markdown.
+[ "$solo_md" != 1 ] || exigir_solo_md "sin despliegue, y sin exigir checks"
 
 # ── Fusionar ────────────────────────────────────────────────────────────────
 fusionada_ahora=0
@@ -65,13 +81,22 @@ if [ "$solo_limpiar" != 1 ]; then
       juzgar_ci() {
         ci=0; esperar_ci --vigilar || ci=$?
         case "$ci" in
+          # El rojo frena también con `--solo-md`: el atajo dice que la prosa no
+          # necesita examen propio, no que se fusione por encima de uno suspendido.
           1) aviso "" "No fusiono nada."; exit 1 ;;
-          2) aviso "" \
-               "No la fusiono." \
-               "" \
-               "Mírala tú y, cuando la fusiones, vuelve con:" \
-               "    cerrar-rama.sh $rama --solo-limpiar"
-             exit 0 ;;
+          2) if [ "$solo_md" = 1 ]; then
+               # Es justo lo que provoca el `paths-ignore` de welzy con una PR de
+               # solo documentación, y hasta hoy dejaba la rama abierta esperando
+               # una fusión a mano que nadie recordaba hacer.
+               aviso "" "Sin checks, pero la rama es solo markdown: la fusiono igual."
+             else
+               aviso "" \
+                 "No la fusiono." \
+                 "" \
+                 "Mírala tú y, cuando la fusiones, vuelve con:" \
+                 "    cerrar-rama.sh $rama --solo-limpiar"
+               exit 0
+             fi ;;
         esac
       }
       juzgar_ci
@@ -104,7 +129,14 @@ if [ "$solo_limpiar" != 1 ]; then
         juzgar_ci
       done
 
-      paso "verde: fusiono la PR #$numero"
+      # «Verde» solo si alguien ha visto uno. Con `--solo-md` aquí se llega
+      # también por el camino de «sin checks», y cantar un verde que no existe es
+      # la misma mentira que `--sin-ci` provocó el 14-08-2026 un guión más allá.
+      if [ "$ci" = 2 ]; then
+        paso "sin checks, pero es solo markdown: fusiono la PR #$numero"
+      else
+        paso "verde: fusiono la PR #$numero"
+      fi
       $GH pr merge "$numero" --merge >&2 ||
         morir "" "GitHub no ha podido fusionar la PR #$numero. No he borrado nada."
       fusionada_ahora=1 ;;
@@ -115,7 +147,12 @@ fi
 # Solo si el repositorio sigue el contrato de cmdlo: publica imágenes con
 # `release.yml` y trae su `ops/deploy/deploy.sh`. Los demás no tienen a dónde ir.
 if [ "$fusionada_ahora" = 1 ] && [ "$sin_desplegar" != 1 ]; then
-  if [ -x "$DESPLEGAR" ] && [ -f "$raiz/ops/deploy/deploy.sh" ] &&
+  # Un cambio de solo markdown no cambia lo que corre en producción: la imagen
+  # que se publicaría es la misma con otro README dentro. Desplegar por él es
+  # gastar un despliegue —y su riesgo— en algo que nadie va a notar allí.
+  if [ "$solo_md" = 1 ]; then
+    paso "solo markdown: no despliego nada a producción"
+  elif [ -x "$DESPLEGAR" ] && [ -f "$raiz/ops/deploy/deploy.sh" ] &&
      [ -f "$raiz/.github/workflows/release.yml" ]; then
     paso "despliego $(basename "$raiz") a producción"
     "$DESPLEGAR" "$(basename "$raiz")" >&2 ||

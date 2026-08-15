@@ -278,6 +278,16 @@ trabajar() { # trabajar <ruta-del-worktree> <texto>
   git -C "$1" commit -qm "feat: $2"
 }
 
+# Lo mismo, pero de solo documentación: es lo que `--solo-md` tiene que dejar
+# pasar. Mismo freno de la ruta vacía, y por el mismo motivo.
+documentar() { # documentar <ruta-del-worktree> <texto>
+  [ -n "${1:-}" ] && [ -d "$1" ] ||
+    { mal "documentar necesita un worktree y ha recibido '${1:-}'"; return 1; }
+  printf '%s\n' "$2" >> "$1/LEEME.md"
+  git -C "$1" add -A
+  git -C "$1" commit -qm "docs: $2"
+}
+
 # Imprime la ruta del worktree, y cuando falla imprime una ruta IMPOSIBLE en vez
 # de nada. Una ruta vacía es lo peligroso, y no por poco: `git -C ""` no falla
 # —git lo documenta como «deja el directorio actual sin cambiar»—, así que un
@@ -1082,6 +1092,135 @@ revisar "$d" nunca-hubo-pila >/dev/null 2>&1
 msg=$(cerrar verde "$d" nunca-hubo-pila 2>&1) && nhp=0 || nhp=1
 afirmar "sin pila que tumbar, cierra igual"  test "$nhp" = 0
 afirmar "y no presume de haberla tumbado"    contiene "no había pila" "$msg"
+
+# ════════════════════════════════════════════════════════════════════════════
+caso "--solo-md: el atajo se salta los frenos, pero no se cree quien lo pide"
+# Un cambio de solo markdown no ejecuta nada, así que ni verificar.sh ni revisión.
+# Con el verificar.sh en ROJO y sin marca de revisión a propósito: si el atajo no
+# funcionara, cualquiera de los dos pararía esto.
+d=$(montar); con_workflow "$d"; con_verificar "$d" 1
+ruta=$(abrir "$d" solo-docs 2>/dev/null); documentar "$ruta" uno
+msg=$(probar_rama verde "$d" solo-docs --solo-md 2>&1) && atajo=0 || atajo=1
+afirmar "con solo .md, ni verifica ni exige revisión"  test "$atajo" = 0
+afirmar "y abre la PR"                                 test -f "$d/estado/pr-solo-docs"
+negar   "sin llegar a lanzar el verificar.sh"          test -f "$d/estado/verificar.cwd"
+afirmar "y lo dice"                                    contiene "solo markdown" "$msg"
+# La línea que se copia al terminar tiene que llevar la bandera puesta: sin ella,
+# el segundo tiempo vuelve a exigir justo lo que este atajo acaba de perdonar.
+afirmar "la despedida ofrece el cierre con --solo-md" \
+        contiene "cerrar-rama.sh solo-docs --solo-md" "$msg"
+
+# Y el freno de verdad: un fichero que no sea .md y no hay atajo. Se comprueba
+# ANTES de empujar, porque después ya da igual.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" docs-con-codigo 2>/dev/null); documentar "$ruta" uno; trabajar "$ruta" dos
+msg=$(probar_rama verde "$d" docs-con-codigo --solo-md 2>&1) && colado=0 || colado=1
+afirmar "con un fichero que no es .md, se niega"  test "$colado" = 1
+afirmar "y dice cuál es"                          contiene "nuevo.txt" "$msg"
+negar   "no ha abierto ninguna PR"                test -f "$d/estado/pr-docs-con-codigo"
+negar   "ni ha empujado la rama"                  hay_remota "$d" docs-con-codigo
+
+# El renombrado es el agujero que `--no-renames` tapa: con detección de
+# renombrados, `git diff --name-only` imprime SOLO el destino, así que
+# `guion.sh → guion.md` se leería como markdown puro cuando lo que ha pasado es
+# que ha desaparecido un guión.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" renombra-un-guion 2>/dev/null)
+printf '#!/bin/sh\necho hola\n' > "$ruta/guion.sh"
+git -C "$ruta" add -A; git -C "$ruta" commit -qm "un guión"
+git -C "$ruta" push -q origin "renombra-un-guion:main"
+git -C "$ruta" mv guion.sh guion.md
+git -C "$ruta" commit -qm "docs: lo convierto en markdown"
+msg=$(probar_rama verde "$d" renombra-un-guion --solo-md 2>&1) && renombrado=0 || renombrado=1
+afirmar "un .sh renombrado a .md no cuela como markdown" test "$renombrado" = 1
+afirmar "y nombra el guión que ha desaparecido"          contiene "guion.sh" "$msg"
+
+# Un acento en el nombre del fichero no lo saca de ser markdown. De serie git
+# escapa y entrecomilla las rutas no ASCII —`"dise\303\261o.md"`—, y eso no acaba
+# en `.md`: el atajo se caía diciendo que `diseño.md` no era documentación.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" docs-con-acento 2>/dev/null)
+printf 'con acentos\n' > "$ruta/diseño.md"
+git -C "$ruta" add -A; git -C "$ruta" commit -qm "docs: con acento"
+msg=$(probar_rama verde "$d" docs-con-acento --solo-md 2>&1) && acento=0 || acento=1
+afirmar "un .md con acento en el nombre sigue siendo markdown" test "$acento" = 0
+negar   "y no se le acusa de no serlo"  contiene "no son markdown" "$msg"
+
+caso "--solo-md: «sin checks» deja de frenar, el rojo no"
+# Es lo que provoca el paths-ignore de welzy con una PR de solo documentación:
+# CI configurado que esa PR no dispara. Fuera del atajo eso para la cadena.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" docs-sin-checks 2>/dev/null); documentar "$ruta" uno
+msg=$(probar_rama sin-checks "$d" docs-sin-checks --solo-md 2>&1) && sin_checks=0 || sin_checks=1
+afirmar "sin checks y con --solo-md, sigue"       test "$sin_checks" = 0
+negar   "y no se despide como si esperara un verde" contiene "Sin un verde" "$msg"
+negar   "ni canta un verde que nadie ha visto"      contiene "está verde" "$msg"
+
+# Sin la bandera, la misma PR se para: el atajo tiene que ser lo que cambia.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" docs-sin-atajo 2>/dev/null); documentar "$ruta" uno
+revisar "$d" docs-sin-atajo >/dev/null 2>&1
+msg=$(probar_rama sin-checks "$d" docs-sin-atajo 2>&1)
+afirmar "sin --solo-md, «sin checks» sigue parando" contiene "Sin un verde" "$msg"
+
+# El rojo frena igual: el atajo dice que la prosa no necesita examen propio, no
+# que se pueda pasar por encima de uno ya suspendido. En dotfiles el CI de una
+# PR de markdown corre entero, así que este caso es el de todos los días.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" docs-en-rojo 2>/dev/null); documentar "$ruta" uno
+negar "con el CI en rojo, --solo-md no perdona nada" \
+      probar_rama rojo "$d" docs-en-rojo --solo-md
+
+caso "--solo-md: lo que se contradice se rechaza también aquí"
+d=$(montar)
+msg=$(probar_rama verde "$d" md1 --solo-md --sin-verificar 2>&1) && md1=0 || md1=1
+afirmar "--solo-md con --sin-verificar se rechaza"  test "$md1" = 1
+afirmar "y dice cuál sobra"                         contiene "sobra: --sin-verificar" "$msg"
+
+msg=$(probar_rama verde "$d" md2 --solo-md --sin-revisar 2>&1) && md2=0 || md2=1
+afirmar "--solo-md con --sin-revisar se rechaza"    test "$md2" = 1
+afirmar "y dice cuál sobra"                         contiene "sobra: --sin-revisar" "$msg"
+
+msg=$(probar_rama verde "$d" md3 --solo-pila --solo-md 2>&1) && md3=0 || md3=1
+afirmar "--solo-pila con --solo-md se rechaza"      test "$md3" = 1
+afirmar "y dice cuál sobra"                         contiene "sobra: --solo-md" "$msg"
+
+msg=$(cerrar verde "$d" md4 --solo-md --sin-desplegar 2>&1) && md4=0 || md4=1
+afirmar "al cerrar, --solo-md con --sin-desplegar se rechaza" test "$md4" = 1
+afirmar "y dice que ya no despliega"  contiene "ya no despliega" "$msg"
+
+caso "cerrar-rama.sh --solo-md: fusiona sin checks y no despliega"
+# Los dos motivos por los que una PR de documentación se quedaba abierta para
+# siempre: el «sin checks» de welzy, y un despliegue que no cambiaría nada allí.
+d=$(montar); con_workflow "$d"; con_contrato_de_despliegue "$d"
+ruta=$(abrir "$d" cerrar-docs 2>/dev/null); documentar "$ruta" uno
+msg=$(cerrar sin-checks "$d" cerrar-docs --solo-md 2>&1) && cerro_md=0 || cerro_md=1
+afirmar "sin checks, sale bien"              test "$cerro_md" = 0
+# Y «sale bien» no basta: el camino de rendirse ante un «sin checks» TAMBIÉN sale
+# con 0 —«mírala tú y vuelve con --solo-limpiar»—, así que juzgar por el código
+# de salida daba por fusionada una rama que seguía abierta.
+negar   "y no se rinde ante la falta de checks" contiene "No la fusiono" "$msg"
+afirmar "lo dice con todas las letras"       contiene "solo markdown" "$msg"
+# Y no puede cantar un verde que no existe: aquí no ha habido un solo check.
+negar   "sin llamar «verde» a lo que no lo es" contiene "verde: fusiono" "$msg"
+negar   "no queda worktree"                  hay_worktree "$d" cerrar-docs
+negar   "no queda rama local"                hay_rama "$d" cerrar-docs
+afirmar "y main se ha quedado con el .md"    test -f "$d/repo/LEEME.md"
+afirmar "sin tocar producción"               test -z "$(registro "$d" despliegues.log)"
+
+# El mismo freno que al probar, ahora del lado del borrado: si el diff no es solo
+# markdown, no fusiona ni limpia nada.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" cerrar-con-codigo 2>/dev/null); documentar "$ruta" uno; trabajar "$ruta" dos
+negar   "con código dentro, se niega a cerrar"  cerrar sin-checks "$d" cerrar-con-codigo --solo-md
+afirmar "y no ha borrado el worktree"           hay_worktree "$d" cerrar-con-codigo
+afirmar "ni la rama"                            hay_rama "$d" cerrar-con-codigo
+
+# Y el rojo sigue mandando también al cerrar.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" cerrar-docs-rojo 2>/dev/null); documentar "$ruta" uno
+negar   "con el CI en rojo, no fusiona"   cerrar rojo "$d" cerrar-docs-rojo --solo-md
+afirmar "y no ha borrado la rama"         hay_rama "$d" cerrar-docs-rojo
 
 echo
 if [ "$fallos" -eq 0 ]; then

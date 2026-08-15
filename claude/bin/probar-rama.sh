@@ -43,7 +43,7 @@ set -Eeuo pipefail
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib-ramas.sh"
 
-rama_arg=""; forzar=0; sin_ci=0; sin_verificar=0; sin_revisar=0
+rama_arg=""; forzar=0; sin_ci=0; sin_verificar=0; sin_revisar=0; solo_md=0
 pidio_con=0; pidio_solo=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -51,6 +51,9 @@ while [ $# -gt 0 ]; do
     --sin-ci)        sin_ci=1 ;;
     --sin-verificar) sin_verificar=1 ;;
     --sin-revisar)   sin_revisar=1 ;;
+    # El atajo de la documentación: ni verificar.sh ni revisión, porque no hay
+    # nada que ejecutar. Y no se fía de quien lo escribe — comprueba el diff.
+    --solo-md)       solo_md=1 ;;
     --con-pila)      pidio_con=1 ;;
     # Levantar y ya: ni comprueba, ni revisa, ni empuja, ni abre PR, ni pregunta
     # al CI. Es el camino de «dije que no y he cambiado de idea», y lo caro de
@@ -58,7 +61,7 @@ while [ $# -gt 0 ]; do
     --solo-pila)     pidio_solo=1 ;;
     -h | --help)
       morir "Uso: probar-rama.sh [<rama>] [--forzar] [--sin-ci]" \
-        "                        [--sin-verificar] [--sin-revisar]" \
+        "                        [--sin-verificar] [--sin-revisar] [--solo-md]" \
         "                        [--con-pila | --solo-pila]" \
         "" \
         "  <rama>            la que se prueba. Por defecto, la del directorio actual." \
@@ -66,6 +69,8 @@ while [ $# -gt 0 ]; do
         "  --sin-ci          no espera al CI." \
         "  --sin-verificar   no lanza el verificar.sh de la rama." \
         "  --sin-revisar     empuja aunque el diff no esté revisado." \
+        "  --solo-md         rama de solo markdown: ni verificar.sh ni revisión." \
+        "                    Se niega si el diff toca algo que no acabe en .md." \
         "  --con-pila        además, levanta la pila local de la rama al terminar." \
         "  --solo-pila       solo la pila: ni comprueba, ni empuja, ni mira el CI." \
         "" \
@@ -93,9 +98,23 @@ if [ "$pidio_solo" = 1 ]; then
   [ "$sin_ci"        != 1 ] || sobra="$sobra --sin-ci"
   [ "$sin_verificar" != 1 ] || sobra="$sobra --sin-verificar"
   [ "$sin_revisar"   != 1 ] || sobra="$sobra --sin-revisar"
+  [ "$solo_md"       != 1 ] || sobra="$sobra --solo-md"
   [ -z "$sobra" ] ||
     morir "--solo-pila ya se salta todo eso; sobra:$sobra" \
           "Solo levanta la pila: no comprueba, no revisa, no empuja y no mira el CI."
+fi
+
+# Por lo mismo que arriba: `--solo-md` YA se salta esos dos, y escribirlos al
+# lado sugiere que hacen falta para que se salten. Peor todavía, sugiere que
+# `--solo-md` es un alias de los dos, cuando lo que lo distingue es que
+# comprueba el diff antes de perdonar nada.
+if [ "$solo_md" = 1 ]; then
+  sobra=""
+  [ "$sin_verificar" != 1 ] || sobra="$sobra --sin-verificar"
+  [ "$sin_revisar"   != 1 ] || sobra="$sobra --sin-revisar"
+  [ -z "$sobra" ] ||
+    morir "--solo-md ya se salta eso; sobra:$sobra" \
+          "La diferencia es que --solo-md comprueba antes que el diff sea solo .md."
 fi
 
 hacer_pila=0; hacer_pr=1
@@ -136,18 +155,23 @@ avisar() {                              # avisar <mensaje> [url-que-abrir]
 # contestar que no hay docker-compose.yml. Y dos, dejar creer que el CI está
 # verde cuando nadie lo ha mirado, que es lo que pide `--sin-ci`.
 despedida() {                           # despedida <primera-línea…>
-  local siguiente
+  local siguiente cierre
   if hay_pila; then
     siguiente="  local:   probar-rama.sh $rama --solo-pila"
   else
     siguiente="  local:   aquí no hay docker-compose.yml; no hay pila que levantar"
   fi
+  # La bandera viaja al segundo tiempo, porque allí también significa algo —no
+  # desplegar, y no plantarse ante un «sin checks»—. Sin esto, la línea que se
+  # copia y se pega es la que vuelve a exigir lo que este atajo acaba de saltarse.
+  cierre="  cerrar:  cerrar-rama.sh $rama"
+  [ "$solo_md" != 1 ] || cierre="  cerrar:  cerrar-rama.sh $rama --solo-md"
   aviso "" "$@"
   [ -z "$nota_ci" ] || aviso "" "$nota_ci"
   aviso "" \
     "  PR:      ${url_pr:-todavía no hay ninguna}" \
     "$siguiente" \
-    "  cerrar:  cerrar-rama.sh $rama"
+    "$cierre"
 }
 
 # Lo que se puede decir del CI, y solo si se ha preguntado. Un «verde» que nadie
@@ -168,8 +192,16 @@ if [ "$hacer_pr" = 1 ]; then
 
   # Primero lo mecánico y luego lo que hay que leer: si `verificar.sh` está rojo,
   # la revisión se habría gastado en código que ni siquiera pasa el lint.
-  exigir_verificacion "$sin_verificar"
-  exigir_revision "$sin_revisar"
+  #
+  # Con `--solo-md` no se salta ninguno de los dos «porque sí»: primero se
+  # comprueba que el diff sea de verdad solo markdown, y esa comprobación va
+  # después de `hay_algo_que_empujar` porque las dos necesitan el mismo `fetch`.
+  if [ "$solo_md" = 1 ]; then
+    exigir_solo_md "no lanzo verificar.sh ni exijo revisión"
+  else
+    exigir_verificacion "$sin_verificar"
+    exigir_revision "$sin_revisar"
+  fi
 
   empujar_y_abrir_pr
   recordar_url_pr
@@ -184,15 +216,29 @@ if [ "$hacer_pr" = 1 ]; then
     paso "espero al CI de la PR #$numero"
     ci=0; esperar_ci --vigilar || ci=$?
     case "$ci" in
+      0) paso "CI en verde"
+         nota_ci="Su CI está verde." ;;
+      # El rojo frena igual con `--solo-md`. No es una contradicción: lo que el
+      # atajo dice es que un cambio de prosa no necesita examen propio, no que
+      # se pueda fusionar por encima de un examen ya suspendido. En dotfiles el
+      # CI de una PR de markdown corre entero —no hay `paths-ignore`—, así que
+      # este rojo es un rojo de verdad.
       1) despedida "El CI no está verde. Arréglalo en la rama y vuelve a lanzarme."
          avisar "El CI no está verde" "$url_pr"
          exit 1 ;;
-      2) despedida "Sin un verde no hay nada que valga la pena probar."
-         avisar "Sin checks: la PR espera" "$url_pr"
-         exit 0 ;;
+      # «Sin checks» es lo que welzy provoca a propósito con su `paths-ignore` en
+      # las PRs de documentación. Fuera del atajo eso para la cadena —«sin
+      # checks» no es un aprobado—; dentro, pararse ahí sería plantar el freno
+      # justo en el caso para el que se pidió el atajo.
+      2) if [ "$solo_md" = 1 ]; then
+           paso "sin checks, y con solo markdown eso no frena nada"
+           nota_ci="Su CI no ha disparado ningún check, que es lo normal en una PR de solo markdown."
+         else
+           despedida "Sin un verde no hay nada que valga la pena probar."
+           avisar "Sin checks: la PR espera" "$url_pr"
+           exit 0
+         fi ;;
     esac
-    paso "CI en verde"
-    nota_ci="Su CI está verde."
   else
     nota_ci="Su CI está sin mirar, que es lo que pide --sin-ci."
   fi
