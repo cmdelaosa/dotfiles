@@ -1135,6 +1135,17 @@ msg=$(probar_rama verde "$d" renombra-un-guion --solo-md 2>&1) && renombrado=0 |
 afirmar "un .sh renombrado a .md no cuela como markdown" test "$renombrado" = 1
 afirmar "y nombra el guión que ha desaparecido"          contiene "guion.sh" "$msg"
 
+# Un acento en el nombre del fichero no lo saca de ser markdown. De serie git
+# escapa y entrecomilla las rutas no ASCII —`"dise\303\261o.md"`—, y eso no acaba
+# en `.md`: el atajo se caía diciendo que `diseño.md` no era documentación.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" docs-con-acento 2>/dev/null)
+printf 'con acentos\n' > "$ruta/diseño.md"
+git -C "$ruta" add -A; git -C "$ruta" commit -qm "docs: con acento"
+msg=$(probar_rama verde "$d" docs-con-acento --solo-md 2>&1) && acento=0 || acento=1
+afirmar "un .md con acento en el nombre sigue siendo markdown" test "$acento" = 0
+negar   "y no se le acusa de no serlo"  contiene "no son markdown" "$msg"
+
 caso "--solo-md: «sin checks» deja de frenar, el rojo no"
 # Es lo que provoca el paths-ignore de welzy con una PR de solo documentación:
 # CI configurado que esa PR no dispara. Fuera del atajo eso para la cadena.
@@ -1190,6 +1201,8 @@ afirmar "sin checks, sale bien"              test "$cerro_md" = 0
 # de salida daba por fusionada una rama que seguía abierta.
 negar   "y no se rinde ante la falta de checks" contiene "No la fusiono" "$msg"
 afirmar "lo dice con todas las letras"       contiene "solo markdown" "$msg"
+# Y no puede cantar un verde que no existe: aquí no ha habido un solo check.
+negar   "sin llamar «verde» a lo que no lo es" contiene "verde: fusiono" "$msg"
 negar   "no queda worktree"                  hay_worktree "$d" cerrar-docs
 negar   "no queda rama local"                hay_rama "$d" cerrar-docs
 afirmar "y main se ha quedado con el .md"    test -f "$d/repo/LEEME.md"

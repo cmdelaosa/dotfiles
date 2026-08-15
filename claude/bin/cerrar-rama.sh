@@ -129,7 +129,14 @@ if [ "$solo_limpiar" != 1 ]; then
         juzgar_ci
       done
 
-      paso "verde: fusiono la PR #$numero"
+      # «Verde» solo si alguien ha visto uno. Con `--solo-md` aquí se llega
+      # también por el camino de «sin checks», y cantar un verde que no existe es
+      # la misma mentira que `--sin-ci` provocó el 14-08-2026 un guión más allá.
+      if [ "$ci" = 2 ]; then
+        paso "sin checks, pero es solo markdown: fusiono la PR #$numero"
+      else
+        paso "verde: fusiono la PR #$numero"
+      fi
       $GH pr merge "$numero" --merge >&2 ||
         morir "" "GitHub no ha podido fusionar la PR #$numero. No he borrado nada."
       fusionada_ahora=1 ;;

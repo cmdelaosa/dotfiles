@@ -33,7 +33,7 @@ sostiene: son dos preguntas distintas y por eso son dos guiones.
 | `claude/bin/marcar-revisado.sh` | Sella el HEAD que ya ha pasado por el revisor. Caduca con el commit siguiente, que es lo que hace que el sello signifique algo |
 | `claude/bin/cerrar-rama.sh` | Recomprueba el verde, comprueba que no es anterior al `main` de ahora, fusiona, despliega si el repo tiene el contrato de cmdlo, y limpia pila, worktree y las dos ramas. Con `--solo-md` no despliega y un «sin checks» no le impide fusionar |
 | `claude/bin/lib-ramas.sh` | Lo que comparten los tres: resolver el repo, los frenos, el CI, la pila |
-| `claude/bin/probar-ramas.sh` | La matriz de los cuatro (241 casos), con GitHub, Docker, curl y nc de mentira |
+| `claude/bin/probar-ramas.sh` | La matriz de los cuatro (244 casos), con GitHub, Docker, curl y nc de mentira |
 | `claude/skills/` | `rama`, `probar`, `cerrar` (el flujo de ramas), más `despliega`, `grill-me` y `new-project` |
 | `verificar.sh` | Sintaxis de todos los guiones y las tres matrices. Lo lanza `probar-rama.sh` antes de empujar, así que un error se ve aquí y no doce minutos después en el CI |
 | `.github/workflows/ci.yml` | Un trabajo, y es **este mismo `verificar.sh`**. El verde de la PR y el de tu portátil son la misma pregunta, no dos listas que se desincronizan |

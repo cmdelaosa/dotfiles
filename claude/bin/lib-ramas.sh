@@ -197,8 +197,19 @@ exigir_revision() {                     # exigir_revision <sin_revisar>
 # extensión caen del lado de la cadena entera. La regla se explica en una frase
 # —«si un fichero no acaba en .md, no hay atajo»— y una regla con lista de
 # excepciones deja de poder explicarse a la tercera excepción.
+# `core.quotePath=false` porque de serie git escapa las rutas no ASCII y las
+# entrecomilla —`claude/skills/diseño.md` sale como `"dise\303\261o.md"`—, y eso
+# no acaba en `.md`: un fichero con un acento en el nombre tumbaba el atajo
+# diciendo que no era markdown.
+#
+# Y la salida de git se recoge ANTES de filtrarla, con su código de salida
+# mirado, porque el `|| true` que necesita el `grep` —que sale 1 cuando no
+# encuentra nada, que aquí es el caso bueno— se tragaba también un `git diff`
+# roto. Una base que no se puede resolver dejaba la lista vacía, y una lista
+# vacía es exactamente lo que este freno lee como «todo es markdown»: fallar
+# hacia el lado permisivo es no tener freno los días raros.
 diff_no_md() {                          # diff_no_md → imprime lo que no es .md
-  local base="$principal"
+  local base="$principal" tocados
   if [ "$hubo_remoto" = 1 ]; then
     base="origin/$principal"
     [ "${ya_traido:-0}" = 1 ] || {
@@ -206,13 +217,21 @@ diff_no_md() {                          # diff_no_md → imprime lo que no es .m
       ya_traido=1
     }
   fi
-  git -C "$raiz" diff --name-only --no-renames "$base...$rama" |
-    grep -v '\.md$' || true
+  tocados=$(git -C "$raiz" -c core.quotePath=false \
+              diff --name-only --no-renames "$base...$rama") || return 1
+  printf '%s' "$tocados" | grep -v '\.md$' || true
 }
 
 exigir_solo_md() {                      # exigir_solo_md <qué-se-salta>
-  local sobran
-  sobran=$(diff_no_md)
+  local sobran base_dicha="$principal"
+  [ "$hubo_remoto" != 1 ] || base_dicha="origin/$principal"
+  # La declaración y la asignación van por separado a propósito: en
+  # `local sobran=$(…)` el código de salida que se ve es el del `local`, que
+  # siempre es 0, así que el fallo de dentro se perdería justo aquí.
+  sobran=$(diff_no_md) ||
+    morir "No he podido comparar '$rama' con $base_dicha," \
+          "así que no puedo saber si esto es solo markdown. No sigo." \
+          "Un freno que no sabe responder tiene que decir que no."
   if [ -n "$sobran" ]; then
     aviso "--solo-md, pero esta rama toca ficheros que no son markdown:" ""
     printf '%s\n' "$sobran" | sed 's/^/    /' >&2
