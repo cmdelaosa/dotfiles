@@ -68,3 +68,9 @@ sola — verifica, revisa a `max` en el mejor Opus, commitea los arreglos, empuj
 y espera al CI; con el CI ya corriendo, y no antes, pregunta si además quiere la
 pila local. No acaba con la pregunta: acaba con la PR verde, o parada y
 enseñando los jobs. `cerrar` solo cuando dé el visto bueno.
+
+**Si la rama solo toca ficheros `.md`, esa cadena no se ejecuta** *(15-08-2026)*:
+la rama y su worktree se abren igual —esto no cambia—, pero al terminar va
+`probar-rama.sh <rama> --solo-md`, que empuja y abre la PR sin verificar ni
+revisar, y lo que se pregunta es *¿la fusiono?*. Con el sí, `cerrar-rama.sh
+<rama> --solo-md`, que además no despliega. La skill `probar` tiene el detalle.

@@ -1,9 +1,13 @@
 ---
 name: probar
-description: Cadena automática al acabar de programar - verificar.sh, code-review a max en el mejor Opus, sus arreglos commiteados, y push+PR+CI con ~/.claude/bin/probar-rama.sh. No fusiona nada. Con el CI ya corriendo (sin esperar a que acabe) pregunta si levantar la pila local. Usar SIEMPRE al terminar de programar una rama, sin que el usuario lo pida, y también cuando diga "pruébalo", "levántalo", "déjamelo listo" o "/probar".
+description: Cadena automática al acabar de programar - verificar.sh, code-review a max en el mejor Opus, sus arreglos commiteados, y push+PR+CI con ~/.claude/bin/probar-rama.sh. No fusiona nada. Con el CI ya corriendo (sin esperar a que acabe) pregunta si levantar la pila local. Si la rama solo toca ficheros .md, va por el atajo --solo-md - sin verificar, sin revisión, sin despliegue - y lo que pregunta es si fusionar. Usar SIEMPRE al terminar de programar una rama, sin que el usuario lo pida, y también cuando diga "pruébalo", "levántalo", "déjamelo listo" o "/probar".
 ---
 
 # Dejar una rama lista para probar
+
+> **¿La rama solo toca ficheros `.md`?** Entonces esto no va: salta al [atajo de
+> solo markdown](#el-atajo-de-solo-markdown), al final. Lo de aquí abajo —los
+> cinco pasos, la revisión a `max`, la pila— es para las ramas que ejecutan algo.
 
 Es el primer tiempo del cierre. El segundo es la skill `cerrar`, y **solo lo
 lanza el usuario**.
@@ -226,6 +230,55 @@ PR ya cerrada, y quedarse sin puerto libre al levantar la pila—. Ahí la caden
 se para en silencio, así que **esos hay que contarlos tú**, y no darlos por
 avisados. La señal del paso 4 tampoco suena: es de mitad de camino, y por eso
 hay que sondearla.
+
+## El atajo de solo markdown
+
+*(15-08-2026)* **Si el diff de la rama contra `main` no toca un solo fichero que
+no acabe en `.md`, la cadena de arriba no se ejecuta.** Un cambio de prosa no
+tiene lint que romper, ni tipos, ni pruebas que pasen de verdes a rojas, y una
+revisión a `max` sobre él se gasta leyendo texto. Tampoco se despliega: la imagen
+de producción sería idéntica con otro README dentro.
+
+Queda en tres tiempos, y solo el segundo espera al usuario:
+
+**1. Empujar y abrir la PR**, sin verificar y sin revisar:
+
+```bash
+~/.claude/bin/probar-rama.sh <rama> --solo-md
+```
+
+En dotfiles, `./claude/bin/probar-rama.sh <rama> --solo-md`, por lo mismo que en
+el paso 3 de arriba. En segundo plano también: el CI de dotfiles corre entero con
+las PRs de markdown —no tiene `paths-ignore`— y son un par de minutos.
+
+**No hay que escribir `--sin-verificar` ni `--sin-revisar`**: el guión los
+rechaza al lado de `--solo-md` porque ya se los salta, y porque lo que distingue
+a esta bandera de aquellas dos es que **comprueba el diff antes de perdonar
+nada**. Si asoma un `.sh`, un `.json` o un `.ts` —o un `guion.sh` renombrado a
+`guion.md`—, muere nombrando el fichero y toca la cadena entera. Ese freno existe
+porque quien pide el atajo es quien acaba de decidir, él solo, que lo suyo «es
+solo documentación».
+
+**2. Preguntar si se fusiona.** Cuando el guión termine, `AskUserQuestion` —*¿la
+fusiono?*— con la URL de la PR delante. Es la única pregunta de todo el atajo, y
+sustituye a la de la pila: una rama de markdown no tiene nada que levantar.
+
+- **Si el CI salió rojo**, no preguntes: es un rojo de verdad y se arregla como
+  el del paso 5, salvo que aquí no hay revisión que rehacer ni marca que renovar.
+- **«Sin checks» no es rojo** — es lo que provoca el `paths-ignore` de welzy con
+  una PR de documentación. Con `--solo-md` eso deja de frenar: se dice y se
+  pregunta igual.
+
+**3. Con su sí**, `ExitWorktree` con `action: "keep"` y, desde la raíz:
+
+```bash
+~/.claude/bin/cerrar-rama.sh <rama> --solo-md
+```
+
+Fusiona —también sin checks—, **no despliega**, y limpia worktree y las dos
+ramas. Vuelve a comprobar el diff por su cuenta, así que un `--solo-md` mal
+puesto se para aquí también. Con un no, se queda como está: la PR abierta y el
+worktree en pie.
 
 ## Lo que hay que tener claro
 

@@ -176,6 +176,53 @@ exigir_revision() {                     # exigir_revision <sin_revisar>
     "  Saltárselo:       probar-rama.sh $rama --sin-revisar"
 }
 
+# ── El atajo de solo markdown ───────────────────────────────────────────────
+# Un cambio que solo toca `.md` no ejecuta nada: no hay lint que romper, ni
+# tipos, ni pruebas que pasen de verdes a rojas, y la revisión a `max` se gasta
+# leyendo prosa. `--solo-md` se salta los dos frenos de antes del push y, al
+# cerrar, el despliegue.
+#
+# Lo que NO se salta es esta comprobación, y ese es todo el diseño: la bandera
+# no se cree lo que le digan. Mira el diff de la rama contra el principal y se
+# niega si asoma un fichero que no acabe en `.md`. Un atajo que se concede a sí
+# mismo quien lo pide es un atajo que se pide el día que no tocaba —y aquí quien
+# lo pide es un agente que acaba de decidir, él solo, que lo suyo «es solo
+# documentación».
+#
+# `--no-renames` a propósito: con detección de renombrados, `git diff
+# --name-only` imprime solo el destino, así que un `guion.sh → guion.md` pasaría
+# por markdown puro cuando lo que ha ocurrido es que se ha borrado un guión.
+#
+# El estricto es el bueno: `.txt`, un `.png` de docs o un `LICENSE` sin
+# extensión caen del lado de la cadena entera. La regla se explica en una frase
+# —«si un fichero no acaba en .md, no hay atajo»— y una regla con lista de
+# excepciones deja de poder explicarse a la tercera excepción.
+diff_no_md() {                          # diff_no_md → imprime lo que no es .md
+  local base="$principal"
+  if [ "$hubo_remoto" = 1 ]; then
+    base="origin/$principal"
+    [ "${ya_traido:-0}" = 1 ] || {
+      git -C "$raiz" fetch origin --quiet --prune
+      ya_traido=1
+    }
+  fi
+  git -C "$raiz" diff --name-only --no-renames "$base...$rama" |
+    grep -v '\.md$' || true
+}
+
+exigir_solo_md() {                      # exigir_solo_md <qué-se-salta>
+  local sobran
+  sobran=$(diff_no_md)
+  if [ -n "$sobran" ]; then
+    aviso "--solo-md, pero esta rama toca ficheros que no son markdown:" ""
+    printf '%s\n' "$sobran" | sed 's/^/    /' >&2
+    morir "" \
+      "Eso no es documentación: lleva la cadena entera —verificar.sh, revisión" \
+      "a max y, al cerrar, el despliegue—. Quítale el --solo-md."
+  fi
+  paso "solo markdown: ${1:-me salto los frenos}"
+}
+
 # ── La PR ───────────────────────────────────────────────────────────────────
 # Lo único que hace falta saber ANTES de gastar tiempo en verificar y en revisar:
 # que haya algo que empujar. Vivía dentro de `empujar_y_abrir_pr`, o sea DESPUÉS
