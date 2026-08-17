@@ -1465,9 +1465,13 @@ negar   "y no se acusa a ninguno de repetirse"              contiene "ya había 
 d=$(montar); con_workflow "$d"
 ruta=$(abrir "$d" ci-a-medias 2>/dev/null); retocar "$ruta" dos
 revisar "$d" ci-a-medias low >/dev/null 2>&1
-probar_rama corriendo "$d" ci-a-medias >/dev/null 2>&1 || true
+msg=$(probar_rama corriendo "$d" ci-a-medias 2>&1) || true
 negar "un CI a medias no gasta ronda" \
       test -f "$(git -C "$d/repo/.claude/worktrees/wtci-a-medias" rev-parse --absolute-git-dir)/rondas-ci"
+# Y tampoco la cuenta en voz alta. Sin esta segunda aserción, la prueba de
+# arriba pasa igual con el freno quitado —al no haber ningún check con nombre no
+# se escribe ninguna línea de todas formas—, o sea que no probaba el freno.
+negar "ni la anuncia"  contiene "Ronda" "$msg"
 
 # Y el verde cierra la cuenta: las rondas de un rojo ya arreglado no pueden
 # sumarse a las del próximo.
