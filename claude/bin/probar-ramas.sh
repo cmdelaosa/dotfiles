@@ -114,6 +114,12 @@ case $accion in
       # «vuelve a fallar el mismo», que es justo lo que decide si se sigue
       # intentando o se para.
       rojo-otro) echo '[{"bucket":"fail","name":"OTRO","link":"https://example.test/2"}]'; exit 1 ;;
+      # Los nombres de verdad llevan espacios, y estos dos comparten palabra. Es
+      # el caso que rompía el freno: pegando los nombres con espacios, `build`
+      # de uno casaba con el otro y la cadena se paraba en el primer rojo
+      # diciendo que un check se repetía.
+      rojo-largo1) echo '[{"bucket":"fail","name":"build (ubuntu-latest)","link":"https://example.test/3"}]'; exit 1 ;;
+      rojo-largo2) echo '[{"bucket":"fail","name":"build (macos-latest)","link":"https://example.test/4"}]'; exit 1 ;;
       corriendo) echo '[{"bucket":"pending","name":"CI","link":"https://example.test/1"}]' ;;
       *)         exit 1 ;;   # sin checks: gh no imprime JSON ninguno
     esac
@@ -1363,8 +1369,7 @@ afirmar "un nivel más alto del que pide, pasa"  probar_rama verde "$d" nivel-la
 # que nadie escribió no se da por bueno.
 d=$(montar); con_workflow "$d"
 ruta=$(abrir "$d" marca-vieja 2>/dev/null); retocar "$ruta" dos
-printf '%s' "$(git -C "$ruta" rev-parse HEAD)" > "$ruta/../../../.git/worktrees/wtmarca-vieja/revisado" 2>/dev/null ||
-  printf '%s' "$(git -C "$ruta" rev-parse HEAD)" > "$(git -C "$ruta" rev-parse --absolute-git-dir)/revisado"
+printf '%s' "$(git -C "$ruta" rev-parse HEAD)" > "$(git -C "$ruta" rev-parse --absolute-git-dir)/revisado"
 msg=$(probar_rama verde "$d" marca-vieja 2>&1) && paso_vieja=0 || paso_vieja=1
 afirmar "una marca sin nivel no pasa"  test "$paso_vieja" = 1
 afirmar "y se explica por qué"         contiene "sin nivel" "$msg"
@@ -1438,6 +1443,31 @@ revisar "$d" rojo-rotativo low >/dev/null 2>&1
 msg=$(RONDAS_MAXIMAS=2 probar_rama rojo-otro "$d" rojo-rotativo 2>&1) && rot=0 || rot=$?
 afirmar "gastadas las rondas, para aunque el check sea otro"  test "$rot" = 2 -o "$rot" = 3
 afirmar "y dice que se han acabado"                           contiene "arreglo automático" "$msg"
+
+# Dos checks DISTINTOS que comparten una palabra no son el mismo check. Los
+# nombres de GitHub llevan espacios —`build (ubuntu-latest)`— y mientras se
+# guardaban pegados con espacios, el segundo rojo se leía como una repetición
+# del primero: la cadena se plantaba en la primera ronda, que es justo lo
+# contrario de lo que este freno tiene que hacer.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" rojo-nombres-largos 2>/dev/null); retocar "$ruta" dos
+revisar "$d" rojo-nombres-largos low >/dev/null 2>&1
+probar_rama rojo-largo1 "$d" rojo-nombres-largos >/dev/null 2>&1 || true
+retocar "$ruta" tres
+revisar "$d" rojo-nombres-largos low >/dev/null 2>&1
+msg=$(probar_rama rojo-largo2 "$d" rojo-nombres-largos 2>&1) && largos=0 || largos=$?
+afirmar "dos checks que comparten palabra no son el mismo"  test "$largos" = 1
+negar   "y no se acusa a ninguno de repetirse"              contiene "ya había fallado" "$msg"
+
+# Un CI que solo sigue corriendo no es una ronda en rojo. `esperar_ci` devuelve
+# el mismo 1 para las dos cosas, y contarlo gastaría el arreglo automático sin
+# que hubiera fallado nada.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" ci-a-medias 2>/dev/null); retocar "$ruta" dos
+revisar "$d" ci-a-medias low >/dev/null 2>&1
+probar_rama corriendo "$d" ci-a-medias >/dev/null 2>&1 || true
+negar "un CI a medias no gasta ronda" \
+      test -f "$(git -C "$d/repo/.claude/worktrees/wtci-a-medias" rev-parse --absolute-git-dir)/rondas-ci"
 
 # Y el verde cierra la cuenta: las rondas de un rojo ya arreglado no pueden
 # sumarse a las del próximo.

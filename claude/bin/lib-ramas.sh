@@ -346,9 +346,14 @@ clasificar_diff() {
   # como cero es más honesto que inventarles un tamaño en líneas.
   lineas_diff=$(git -C "$raiz" diff --numstat --no-renames "$base...$rama" |
                   awk '$1 != "-" { n += $1 + $2 } END { print n + 0 }') || return 1
+  # En dos pasos, y no `git … | grep -c . || true`: ese `|| true` —que el `grep`
+  # necesita, porque sale 1 cuando no encuentra nada, que aquí es el caso
+  # normal— se tragaba también un `git diff` roto, y un git roto dejaba «cero
+  # ficheros nuevos», que empuja el diff hacia el tramo trivial. Fallar hacia el
+  # lado barato es exactamente lo que este clasificador no puede hacer.
   nuevos=$(git -C "$raiz" -c core.quotePath=false \
-             diff --name-only --no-renames --diff-filter=A "$base...$rama" |
-             grep -c . || true)
+             diff --name-only --no-renames --diff-filter=A "$base...$rama") || return 1
+  nuevos=$(printf '%s' "$nuevos" | grep -c . || true)
 
   if [ -z "$tocados" ]; then
     tramo=vacio; nivel=ninguno; motivo="el diff no toca ningún fichero"
@@ -535,10 +540,14 @@ esperar_ci() {                          # esperar_ci [--vigilar]
   malos=$(printf '%s' "$salida" |
     jq -r '.[] | select(.bucket == "fail" or .bucket == "cancel") | "    \(.name)  \(.link)"')
   # Los nombres a secas, para que `anotar_rojo` pueda comparar esta ronda con
-  # las anteriores. Ordenados y sin repetir: lo que importa es el conjunto.
+  # las anteriores. Ordenados, sin repetir y **uno por línea**: los nombres de
+  # los checks llevan espacios de sobra —`build (ubuntu-latest)`— y pegados con
+  # espacios se partían en trozos, así que un `build` de ahora casaba con
+  # cualquier check anterior que llevara esa palabra y el freno se echaba en el
+  # primer rojo.
   checks_malos=$(printf '%s' "$salida" |
     jq -r '.[] | select(.bucket == "fail" or .bucket == "cancel") | .name' |
-    sort -u | tr '\n' ' ')
+    sort -u)
   if [ -n "$malos" ]; then
     aviso "" "El CI no está verde:" ""
     printf '%s\n' "$malos" >&2
@@ -568,7 +577,9 @@ esperar_ci() {                          # esperar_ci [--vigilar]
 #
 # El fichero vive al lado de la marca de revisión, en el directorio git del
 # worktree: no se commitea, no viaja, y se va con el worktree. Una línea por
-# ronda, «<sha> <tab> <nombres de los checks que fallaron>».
+# check fallado, «<sha> <tab> <nombre>», y no una por ronda con los nombres
+# pegados: los nombres llevan espacios y comparar trozos sueltos daba
+# repeticiones que no existían.
 ruta_rondas() {
   local gitdir
   gitdir=$(git -C "$ruta_wt" rev-parse --absolute-git-dir 2>/dev/null) || return 1
@@ -595,20 +606,32 @@ anotar_rojo() {
   f=$(ruta_rondas) || return 0
   cabeza=$(git -C "$ruta_wt" rev-parse HEAD)
 
+  # Un rojo sin un solo check con nombre no es una ronda: es el «el CI todavía
+  # está corriendo» que sale cuando el `--watch` se cae a mitad, y que
+  # `esperar_ci` devuelve con el mismo 1 que un fallo de verdad. Contarlo
+  # gastaría el arreglo automático sin que hubiera fallado nada.
+  [ -n "$checks_malos" ] || return 0
+
   # Antes de apuntar, ¿alguno de los de ahora ya falló con OTRO commit? Con el
   # mismo commit no cuenta: relanzar sin tocar nada no es una ronda nueva.
-  previos=$(grep -v "^$cabeza	" "$f" 2>/dev/null || true)
+  previos=$(grep -v "^$cabeza	" "$f" 2>/dev/null | cut -f2- || true)
   # El `if` completo y no un `&& repetido=…`: bajo `set -e` una lista `a && b`
   # cuyo primer trozo falla deja el estado en 1, y aquí eso se paga tarde y en
-  # otro sitio.
-  for nombre in $checks_malos; do
-    if printf '%s' "$previos" | grep -qF "$nombre"; then repetido="$nombre"; fi
-  done
+  # otro sitio. Y `grep -x`, no a secas: un check llamado `build` no es el mismo
+  # que `build (ubuntu-latest)`, y con la comparación por trozos lo era.
+  while IFS= read -r nombre; do
+    [ -n "$nombre" ] || continue
+    if printf '%s\n' "$previos" | grep -qxF "$nombre"; then repetido="$nombre"; fi
+    grep -qxF "$cabeza	$nombre" "$f" 2>/dev/null ||
+      printf '%s\t%s\n' "$cabeza" "$nombre" >> "$f"
+  done <<CHECKS
+$checks_malos
+CHECKS
 
-  grep -q "^$cabeza	" "$f" 2>/dev/null ||
-    printf '%s\t%s\n' "$cabeza" "$checks_malos" >> "$f"
-  rondas=$(grep -c . "$f" 2>/dev/null || true)
-  [ -n "$rondas" ] || rondas=1
+  # Las rondas son commits distintos en rojo, no líneas: un commit que falla
+  # tres checks a la vez es una ronda, no tres.
+  rondas=$(cut -f1 "$f" 2>/dev/null | sort -u | grep -c . || true)
+  [ -n "$rondas" ] && [ "$rondas" -gt 0 ] 2>/dev/null || rondas=1
 
   if [ -n "$repetido" ]; then
     parar=1

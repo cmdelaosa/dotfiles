@@ -25,6 +25,9 @@ Al usuario se le pregunta **una sola vez** en toda la cadena, y es en el paso 4.
 ~/.claude/bin/clasificar-diff.sh <rama>
 ```
 
+**En el repositorio dotfiles, `./claude/bin/clasificar-diff.sh`** — igual que en
+el paso 3, y por lo mismo: `~/.claude/bin` es un enlace al checkout de `main`.
+
 Imprime el tramo y el nivel de revisión que pide, mirando el diff entero contra
 `main`:
 

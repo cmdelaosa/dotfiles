@@ -108,8 +108,14 @@ presupuesto() {                         # presupuesto <fichero> <bytes> <líneas
   # comentarios HTML de bloque antes de meter esto en contexto, así que una nota
   # para quien mantiene el fichero no debe gastar presupuesto —ni empujar a
   # borrarla, que es lo que haría contarla.
-  bytes=$(sed '/<!--/,/-->/d' "$f" | wc -c | tr -d ' ')
-  lineas=$(sed '/<!--/,/-->/d' "$f" | wc -l | tr -d ' ')
+  # El `s///` va ANTES del rango, y no es un adorno: en un rango de sed el
+  # patrón de cierre se busca en las líneas SIGUIENTES, así que un comentario de
+  # una sola línea —`<!-- nota -->`— abría el rango y se comía el fichero entero
+  # hasta el próximo `-->`. Con eso, un CLAUDE.md del doble del tope pasaba el
+  # presupuesto porque casi nada llegaba a medirse.
+  sin_comentarios() { sed -e 's/<!--.*-->//g' -e '/<!--/,/-->/d' "$1"; }
+  bytes=$(sin_comentarios "$f" | wc -c | tr -d ' ')
+  lineas=$(sin_comentarios "$f" | wc -l | tr -d ' ')
   if [ "$bytes" -le "$2" ] && [ "$lineas" -le "$3" ]; then
     printf '  ok      %-34s %5s B / %3s líneas (tope %s B / %s)\n' "$1" "$bytes" "$lineas" "$2" "$3"
   else
@@ -160,8 +166,11 @@ elif ! base=$(git -C "$repo" merge-base HEAD origin/main 2>/dev/null); then
   # que no sabe responder tiene que decir que sí a lo caro, no que no.
   lanzar_matrices=1
   motivo_matrices="no encuentro origin/main para comparar, así que las lanzo todas"
-elif git -C "$repo" diff --quiet "$base" -- claude/bin claude/hooks &&
-     git -C "$repo" diff --quiet -- claude/bin claude/hooks; then
+# `git diff <base> -- rutas` compara la BASE con el árbol de trabajo, así que ya
+# incluye lo commiteado y lo que está sin guardar: la segunda comparación que
+# había aquí no añadía nada. Lo que no ve son los ficheros sin seguir, y eso da
+# igual — sin `git add` no se empuja, y el `--todo` del CI los vería igual.
+elif git -C "$repo" diff --quiet "$base" -- claude/bin claude/hooks; then
   motivo_matrices="ni claude/bin ni claude/hooks han cambiado desde origin/main"
 else
   lanzar_matrices=1
