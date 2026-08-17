@@ -64,4 +64,10 @@ jobs:
       # Apple, que acepta menos cosas. `verificar.sh` lo dice al arrancar. Esa
       # comprobación entera solo vale lanzada en el Mac; correrla también aquí
       # cuesta cero y pilla los errores de sintaxis de toda la vida.
-      - run: ./verificar.sh
+      #
+      # `--todo` desde el 17-08-2026: en local las tres matrices solo se lanzan
+      # si el cambio toca `claude/bin` o `claude/hooks`, porque allí el guión es
+      # el freno de antes del push y tiene que costar segundos. Aquí no: el verde
+      # de una PR tiene que significar que se ha probado todo, hay medio minuto
+      # de sobra, y la comparación con `origin/main` no siempre existe.
+      - run: ./verificar.sh --todo

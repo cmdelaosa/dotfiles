@@ -64,10 +64,11 @@ No se pierde nada: esa rama está en el commit de `main` y sin nada encima.
   fue exactamente una cosa rápida.
 
 Al terminar **toda** la tarea no se espera a nadie: la cadena de `probar` arranca
-sola — verifica, revisa a `max` en el mejor Opus, commitea los arreglos, empuja
-y espera al CI; con el CI ya corriendo, y no antes, pregunta si además quiere la
-pila local. No acaba con la pregunta: acaba con la PR verde, o parada y
-enseñando los jobs. `cerrar` solo cuando dé el visto bueno.
+sola — clasifica el diff, lo revisa **una vez** al nivel que ese tramo pida
+(`low`, `high` o `max`), commitea los arreglos, verifica, empuja y abre la PR en
+segundos; ahí pregunta si además quiere la pila local, y solo entonces se queda
+esperando al CI de fondo. No acaba con la pregunta: acaba con la PR verde, o
+parada y enseñando los jobs. `cerrar` solo cuando dé el visto bueno.
 
 **Si la rama solo toca ficheros `.md`, esa cadena no se ejecuta** *(15-08-2026)*:
 la rama y su worktree se abren igual —esto no cambia—, pero al terminar va

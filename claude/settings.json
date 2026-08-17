@@ -91,7 +91,7 @@
     "frontend-design@claude-plugins-official": false
   },
   "outputStyle": "concise",
-  "effortLevel": "high",
+  "effortLevel": "medium",
   "autoUpdatesChannel": "latest",
   "skipDangerousModePermissionPrompt": true,
   "skipWorkflowUsageWarning": true,
