@@ -109,6 +109,11 @@ case $accion in
     case "${ESCENARIO:-verde}" in
       verde*)    echo '[{"bucket":"pass","name":"CI","link":"https://example.test/1"}]' ;;
       rojo)      echo '[{"bucket":"fail","name":"CI","link":"https://example.test/1"}]'; exit 1 ;;
+      # El mismo rojo con OTRO nombre. Hace falta para el freno de las rondas:
+      # con un solo nombre no se puede distinguir «otro check ha fallado» de
+      # «vuelve a fallar el mismo», que es justo lo que decide si se sigue
+      # intentando o se para.
+      rojo-otro) echo '[{"bucket":"fail","name":"OTRO","link":"https://example.test/2"}]'; exit 1 ;;
       corriendo) echo '[{"bucket":"pending","name":"CI","link":"https://example.test/1"}]' ;;
       *)         exit 1 ;;   # sin checks: gh no imprime JSON ninguno
     esac
@@ -236,9 +241,25 @@ chmod +x "$TMP/bin/desplegar.sh"
 export DESPLEGAR="$TMP/bin/desplegar.sh"
 
 # ── Un repositorio nuevo por caso ───────────────────────────────────────────
+#
+# Se monta UNA vez y se copia *(17-08-2026)*. Hay noventa y pico casos, y montar
+# cada uno son ocho órdenes de git: la matriz tardaba 72 s con `sys 33s`, o sea
+# casi todo arrancando procesos. Copiar el molde y reescribir la URL del remoto
+# son dos, y da exactamente el mismo repositorio: lo único que un `cp -a` no
+# puede traer bien son las rutas absolutas de dentro, que son esas dos.
+plantilla=""
 montar() {
   local d
   d=$(mktemp -d "$TMP/caso.XXXXXX")
+
+  if [ -n "$plantilla" ]; then
+    cp -a "$plantilla/." "$d"
+    git -C "$d/repo"   remote set-url origin "$d/remoto.git"
+    git -C "$d/espejo" remote set-url origin "$d/remoto.git"
+    ( cd "$d" && pwd -P | tr -d '\n' )
+    return 0
+  fi
+
   git init -q --bare -b main "$d/remoto.git"
   git init -q -b main "$d/repo"
   git -C "$d/repo" config user.email t@t
@@ -255,6 +276,12 @@ montar() {
   git -C "$d/espejo" config user.email t@t
   git -C "$d/espejo" config user.name t
   mkdir -p "$d/estado"
+
+  # El molde para los demás casos. Se guarda ya montado y sin tocar: este primer
+  # caso se queda con el original, y los siguientes reciben una copia idéntica.
+  plantilla="$TMP/plantilla"
+  cp -a "$d" "$plantilla"
+
   # Resuelta: en macOS /var es un enlace a /private/var, y los scripts imprimen
   # la ruta que da git, que ya viene resuelta. Comparar sin esto es comparar
   # dos formas de escribir el mismo sitio.
@@ -357,6 +384,8 @@ probar_rama() {  # probar_rama <escenario> <dir> [args…]
       ESTADO="$d/estado" ESPEJO="$d/espejo" ESCENARIO="$esc" ESPERA_CHECKS=0 ESPERA_PILA=1 \
       VOLUMENES="${VOLUMENES:-}" RESPONDE="${RESPONDE:-0}" \
       PUERTOS_PILLADOS="${PUERTOS_PILLADOS:-0}" \
+      LIMITE_TRIVIAL="${LIMITE_TRIVIAL:-30}" LIMITE_GRANDE="${LIMITE_GRANDE:-600}" \
+      RONDAS_MAXIMAS="${RONDAS_MAXIMAS:-3}" \
       "$bin/probar-rama.sh" "$@" )
 }
 
@@ -399,8 +428,42 @@ con_verificar() {  # con_verificar <dir> <código-de-salida>
   git -C "$1/repo" push -q origin main
 }
 
-# Lo que deja la skill `probar` después de pasar el revisor por el diff.
-revisar() { ( cd "$1/repo" && "$bin/marcar-revisado.sh" "$2" ); }
+# Lo que deja la skill `probar` después de pasar el revisor por el diff. El
+# nivel por defecto es `max` —el más alto— a propósito: estos casos no van del
+# nivel, y con el más alto ninguno se cae por el freno del tramo. Los que SÍ van
+# del nivel lo escriben.
+revisar() { ( cd "$1/repo" && "$bin/marcar-revisado.sh" "$2" --nivel "${3:-max}" ); }
+
+# El tramo de riesgo de una rama. Los dos umbrales viajan por el entorno para
+# poder probar el tramo de «esto es enorme» sin escribir seiscientas líneas.
+clasificar() { # clasificar <dir> <rama> [args…]
+  local d=$1; shift
+  ( cd "$d/repo" &&
+      LIMITE_TRIVIAL="${LIMITE_TRIVIAL:-30}" LIMITE_GRANDE="${LIMITE_GRANDE:-600}" \
+      "$bin/clasificar-diff.sh" "$@" )
+}
+
+# Un cambio que NO añade ficheros: toca el que ya existe. Es la diferencia entre
+# el tramo trivial y el normal, y `trabajar` no sirve para probarlo porque crea
+# uno nuevo cada vez.
+retocar() { # retocar <ruta-del-worktree> <texto>
+  [ -n "${1:-}" ] && [ -d "$1" ] ||
+    { mal "retocar necesita un worktree y ha recibido '${1:-}'"; return 1; }
+  printf '%s\n' "$2" >> "$1/f"
+  git -C "$1" add -A
+  git -C "$1" commit -qm "fix: $2"
+}
+
+# Un cambio en una ruta de las delicadas: casa con `*hooks/*` de la lista de
+# serie, así que su tramo es `sensible` por mucho que sean dos líneas.
+tocar_delicado() { # tocar_delicado <ruta-del-worktree>
+  [ -n "${1:-}" ] && [ -d "$1" ] ||
+    { mal "tocar_delicado necesita un worktree y ha recibido '${1:-}'"; return 1; }
+  mkdir -p "$1/hooks"
+  printf '#!/bin/sh\nexit 0\n' > "$1/hooks/freno.sh"
+  git -C "$1" add -A
+  git -C "$1" commit -qm "hooks: un freno"
+}
 
 registro() { cat "$1/estado/$2" 2>/dev/null || true; }
 
@@ -836,9 +899,12 @@ negar "se niega sobre main"                      revisar "$d" main
 negar "se niega con una rama que no existe"      revisar "$d" no-existe
 ruta=$(abrir "$d" marcable 2>/dev/null); trabajar "$ruta" uno
 afirmar "sobre una rama con worktree, marca"     revisar "$d" marcable
-afirmar "y lo que escribe es el HEAD de la rama" \
+# La marca lleva dos cosas desde el 17-08-2026: el SHA, que la hace caducar con
+# el commit siguiente, y el nivel con el que se revisó, que es lo que
+# `probar-rama.sh` compara con el tramo del diff.
+afirmar "y lo que escribe es el HEAD de la rama y el nivel" \
         test "$(cat "$d/repo/.git/worktrees/wtmarcable/revisado" 2>/dev/null)" \
-           = "$(git -C "$ruta" rev-parse HEAD)"
+           = "$(git -C "$ruta" rev-parse HEAD) max"
 negar   "la marca no se cuela en el repositorio" \
         test -n "$(git -C "$ruta" status --porcelain)"
 
@@ -1221,6 +1287,167 @@ d=$(montar); con_workflow "$d"
 ruta=$(abrir "$d" cerrar-docs-rojo 2>/dev/null); documentar "$ruta" uno
 negar   "con el CI en rojo, no fusiona"   cerrar rojo "$d" cerrar-docs-rojo --solo-md
 afirmar "y no ha borrado la rama"         hay_rama "$d" cerrar-docs-rojo
+
+caso "clasificar-diff.sh: los cuatro tramos"
+# La escalera entera, cada tramo con el cambio que lo provoca. Si esto se rompe,
+# la cadena revisa de menos —o revisa a `max` lo que no lo necesita, que es de
+# donde venía todo esto.
+d=$(montar)
+ruta=$(abrir "$d" tramo-md 2>/dev/null); documentar "$ruta" uno
+afirmar "solo .md no pide revisión"  contiene "solo-md ninguno" "$(clasificar "$d" tramo-md 2>/dev/null)"
+
+d=$(montar)
+ruta=$(abrir "$d" tramo-trivial 2>/dev/null); retocar "$ruta" dos
+afirmar "un retoque de una línea es trivial"  contiene "trivial low" "$(clasificar "$d" tramo-trivial 2>/dev/null)"
+
+# Un fichero NUEVO saca del tramo trivial aunque sean tres líneas: lo que no ha
+# leído nadie no es un retoque, es código nuevo.
+d=$(montar)
+ruta=$(abrir "$d" tramo-normal 2>/dev/null); trabajar "$ruta" uno
+afirmar "un fichero nuevo ya no es trivial"  contiene "normal high" "$(clasificar "$d" tramo-normal 2>/dev/null)"
+
+d=$(montar)
+ruta=$(abrir "$d" tramo-delicado 2>/dev/null); tocar_delicado "$ruta"
+salida=$(clasificar "$d" tramo-delicado 2>&1)
+afirmar "una ruta delicada pide max"   contiene "sensible max" "$salida"
+afirmar "y dice cuál y por qué patrón" contiene "hooks/freno.sh" "$salida"
+
+# El tamaño, con el umbral bajado para no escribir seiscientas líneas de mentira.
+d=$(montar)
+ruta=$(abrir "$d" tramo-enorme 2>/dev/null)
+i=0; while [ "$i" -lt 12 ]; do printf 'linea %s\n' "$i" >> "$ruta/f"; i=$((i + 1)); done
+git -C "$ruta" add -A; git -C "$ruta" commit -qm "feat: un montón"
+afirmar "pasado el umbral de tamaño, max" \
+        contiene "sensible max" "$(LIMITE_GRANDE=5 clasificar "$d" tramo-enorme 2>/dev/null)"
+# Y el mismo diff, con el umbral en su sitio, NO es sensible: si lo fuera, la
+# aserción de arriba no probaría el umbral, probaría que todo sale max.
+negar   "con el umbral normal, ese mismo diff no es sensible" \
+        contiene "sensible" "$(clasificar "$d" tramo-enorme 2>/dev/null)"
+
+# `.claude/rutas-sensibles` manda sobre la lista de serie, y se lee la de la
+# RAÍZ: una rama no puede rebajarse el listón borrando de la lista lo que va a
+# tocar. Aquí la raíz declara `f` como delicado, y tocar `f` pasa a pedir max.
+d=$(montar)
+mkdir -p "$d/repo/.claude"
+printf '# lo nuestro\nf\n' > "$d/repo/.claude/rutas-sensibles"
+git -C "$d/repo" add -A; git -C "$d/repo" commit -qm "rutas sensibles"
+git -C "$d/repo" push -q origin main
+ruta=$(abrir "$d" tramo-configurado 2>/dev/null); retocar "$ruta" dos
+afirmar "la lista del repositorio manda" \
+        contiene "sensible max" "$(clasificar "$d" tramo-configurado 2>/dev/null)"
+
+caso "la marca de revisión tiene que llegar al nivel que pide el diff"
+# El freno que convierte la escalera en algo más que una sugerencia. Sin él, el
+# tramo barato se elegiría siempre: quien pide el atajo es quien acaba de
+# decidir, él solo, que lo suyo es sencillo.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" nivel-corto 2>/dev/null); tocar_delicado "$ruta"
+revisar "$d" nivel-corto low >/dev/null 2>&1
+msg=$(probar_rama verde "$d" nivel-corto 2>&1) && paso_corto=0 || paso_corto=1
+afirmar "revisada a low, una rama que pide max no pasa"  test "$paso_corto" = 1
+afirmar "y dice qué nivel pide"                          contiene "pide una revisión a 'max'" "$msg"
+afirmar "y con qué orden se arregla"                     contiene "/code-review nivel-corto max --fix" "$msg"
+negar   "no ha empujado nada"                            hay_remota "$d" nivel-corto
+
+# Y con el nivel que toca, pasa.
+revisar "$d" nivel-corto max >/dev/null 2>&1
+afirmar "revisada a max, la misma rama pasa"  probar_rama verde "$d" nivel-corto
+
+# Sobrarse por arriba no es un fallo: revisar de más nunca frena.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" nivel-largo 2>/dev/null); retocar "$ruta" dos
+revisar "$d" nivel-largo high >/dev/null 2>&1
+afirmar "un nivel más alto del que pide, pasa"  probar_rama verde "$d" nivel-largo
+
+# Una marca de las de antes —solo el SHA, sin nivel— no vale como revisión: lo
+# que nadie escribió no se da por bueno.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" marca-vieja 2>/dev/null); retocar "$ruta" dos
+printf '%s' "$(git -C "$ruta" rev-parse HEAD)" > "$ruta/../../../.git/worktrees/wtmarca-vieja/revisado" 2>/dev/null ||
+  printf '%s' "$(git -C "$ruta" rev-parse HEAD)" > "$(git -C "$ruta" rev-parse --absolute-git-dir)/revisado"
+msg=$(probar_rama verde "$d" marca-vieja 2>&1) && paso_vieja=0 || paso_vieja=1
+afirmar "una marca sin nivel no pasa"  test "$paso_vieja" = 1
+afirmar "y se explica por qué"         contiene "sin nivel" "$msg"
+
+caso "marcar-revisado.sh: el nivel se escribe, no se supone"
+d=$(montar)
+ruta=$(abrir "$d" sin-nivel 2>/dev/null); retocar "$ruta" dos
+msg=$( ( cd "$d/repo" && "$bin/marcar-revisado.sh" sin-nivel ) 2>&1 ) && marco=0 || marco=1
+afirmar "sin --nivel no marca nada"        test "$marco" = 1
+afirmar "y manda mirar el tramo"           contiene "clasificar-diff.sh" "$msg"
+msg=$( ( cd "$d/repo" && "$bin/marcar-revisado.sh" sin-nivel --nivel altísimo ) 2>&1 ) && inventado=0 || inventado=1
+afirmar "un nivel inventado tampoco"       test "$inventado" = 1
+
+caso "probar-rama.sh: la cadena partida en dos"
+# El primer tiempo empuja y abre la PR sin esperar al CI; el segundo solo espera.
+# Partirla es lo que permite preguntar por la pila con el push recién hecho, en
+# vez de sondear doce minutos la salida de un guión.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" cadena-partida 2>/dev/null); retocar "$ruta" dos
+revisar "$d" cadena-partida low >/dev/null 2>&1
+msg=$(probar_rama verde "$d" cadena-partida --sin-ci 2>&1)
+afirmar "el primer tiempo empuja y abre la PR"  test -f "$d/estado/pr-cadena-partida"
+afirmar "sin decir que hay verde"               contiene "sin mirar" "$msg"
+afirmar "y ofrece el segundo tiempo"            contiene "--esperar-ci" "$msg"
+
+msg=$(probar_rama verde "$d" cadena-partida --esperar-ci 2>&1)
+afirmar "el segundo tiempo mira el CI"          contiene "espero al CI" "$msg"
+afirmar "y da su veredicto"                     contiene "Su CI está verde" "$msg"
+negar   "sin volver a lanzar verificar.sh"      test -f "$d/estado/verificar.cwd"
+
+# Sin PR no hay nada que esperar, y se dice con el comando que la abre.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" sin-pr-que-mirar 2>/dev/null); retocar "$ruta" dos
+msg=$(probar_rama verde "$d" sin-pr-que-mirar --esperar-ci 2>&1) && esperado=0 || esperado=1
+afirmar "sin PR, se niega"          test "$esperado" = 1
+afirmar "y dice cómo abrirla"       contiene -- "--sin-ci" "$msg"
+
+# Lo que se contradice se rechaza, igual que con --solo-pila.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" esperar-contradictorio 2>/dev/null); retocar "$ruta" dos
+negar "--esperar-ci con --con-pila se rechaza"  probar_rama verde "$d" esperar-contradictorio --esperar-ci --con-pila
+negar "--esperar-ci con --sin-ci se rechaza"    probar_rama verde "$d" esperar-contradictorio --esperar-ci --sin-ci
+
+caso "probar-rama.sh: el freno de las rondas contra un rojo que no se va"
+# Vivía en la cabeza del modelo —«apunta los nombres de cada ronda y compáralos
+# contra todas las anteriores»—, que es lo que un modelo hace mal y un fichero
+# hace bien. Un check que ya falló y vuelve a fallar para la cadena: un bucle
+# contra un flaky quema rondas de CI y revisiones de Opus sin mover nada.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" rojo-terco 2>/dev/null); retocar "$ruta" dos
+revisar "$d" rojo-terco low >/dev/null 2>&1
+msg=$(probar_rama rojo "$d" rojo-terco 2>&1) && r1=0 || r1=$?
+afirmar "el primer rojo se puede arreglar"   test "$r1" = 1
+afirmar "y lo dice contando la ronda"        contiene "Ronda 1 en rojo" "$msg"
+
+# Otro commit, y el MISMO check vuelve a fallar.
+retocar "$ruta" tres
+revisar "$d" rojo-terco low >/dev/null 2>&1
+msg=$(probar_rama rojo "$d" rojo-terco 2>&1) && r2=0 || r2=$?
+afirmar "el mismo check en rojo dos veces para la cadena"  test "$r2" = 3
+afirmar "y dice cuál se repite"                            contiene "'CI' ya había fallado" "$msg"
+
+# Con checks DISTINTOS no se para por repetición, sino por número de rondas: es
+# el caso que `--fail-fast` provoca solo, rotando el nombre del que falla.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" rojo-rotativo 2>/dev/null); retocar "$ruta" dos
+revisar "$d" rojo-rotativo low >/dev/null 2>&1
+probar_rama rojo "$d" rojo-rotativo >/dev/null 2>&1 || true
+retocar "$ruta" tres
+revisar "$d" rojo-rotativo low >/dev/null 2>&1
+msg=$(RONDAS_MAXIMAS=2 probar_rama rojo-otro "$d" rojo-rotativo 2>&1) && rot=0 || rot=$?
+afirmar "gastadas las rondas, para aunque el check sea otro"  test "$rot" = 2 -o "$rot" = 3
+afirmar "y dice que se han acabado"                           contiene "arreglo automático" "$msg"
+
+# Y el verde cierra la cuenta: las rondas de un rojo ya arreglado no pueden
+# sumarse a las del próximo.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" rojo-y-luego-verde 2>/dev/null); retocar "$ruta" dos
+revisar "$d" rojo-y-luego-verde low >/dev/null 2>&1
+probar_rama rojo "$d" rojo-y-luego-verde >/dev/null 2>&1 || true
+probar_rama verde "$d" rojo-y-luego-verde >/dev/null 2>&1 || true
+negar "el verde borra la cuenta de rondas" \
+      test -f "$(git -C "$d/repo/.claude/worktrees/wtrojo-y-luego-verde" rev-parse --absolute-git-dir)/rondas-ci"
 
 echo
 if [ "$fallos" -eq 0 ]; then

@@ -146,7 +146,7 @@ exigir_revision() {                     # exigir_revision <sin_revisar>
     return 0
   fi
 
-  local marca cabeza revisado
+  local marca cabeza revisado sha_revisado nivel_revisado pide tiene
   # Si no se puede leer la marca, no se pasa: un freno que no sabe responder
   # tiene que decir que no. Fallar hacia el lado permisivo es no tener freno los
   # días raros, que son justo los días en los que hace falta.
@@ -155,11 +155,38 @@ exigir_revision() {                     # exigir_revision <sin_revisar>
           "así que no puedo saber si esto está revisado. No empujo."
   cabeza=$(git -C "$ruta_wt" rev-parse HEAD)
   revisado=$(cat "$marca" 2>/dev/null || true)
+  # Formato de la marca: «<sha> <nivel>». Las marcas viejas solo llevan el SHA, y
+  # esas cuentan como nivel desconocido: se vuelve a marcar diciendo con qué
+  # nivel se revisó, que es una línea, y no se da por bueno lo que nadie escribió.
+  sha_revisado=${revisado%% *}
+  nivel_revisado=${revisado#* }
+  [ "$nivel_revisado" != "$revisado" ] || nivel_revisado=""
 
-  if [ "$revisado" = "$cabeza" ]; then
-    paso "revisada en ${cabeza:0:7}"
+  if [ "$sha_revisado" = "$cabeza" ]; then
+    # El segundo freno *(17-08-2026)*: que el nivel de la revisión sea al menos
+    # el que pide el diff. Sin esto la escalera de tramos sería una sugerencia
+    # que se concede a sí mismo quien la pide —el mismo agujero que `--solo-md`
+    # tapó con su comprobación—, y el tramo barato se elegiría siempre.
+    clasificar_diff ||
+      morir "No he podido clasificar el diff de '$rama'," \
+            "así que no sé qué revisión pide. No empujo."
+    pide=$(orden_de_nivel "$nivel")
+    tiene=$(orden_de_nivel "$nivel_revisado") || tiene=-1
+    if [ "$tiene" -lt "$pide" ]; then
+      aviso "" \
+        "Esta rama es de tramo '$tramo' y pide una revisión a '$nivel':" \
+        "  $motivo"
+      morir "" \
+        "La marca dice ${nivel_revisado:-«sin nivel» (marca de antes de los tramos)}." \
+        "" \
+        "  Revisa:  /code-review $rama $nivel --fix" \
+        "  Marca:   marcar-revisado.sh $rama --nivel $nivel" \
+        "  Mira:    clasificar-diff.sh $rama"
+    fi
+    paso "revisada a '$nivel_revisado' en ${cabeza:0:7} (pide '$nivel': $tramo)"
     return 0
   fi
+  revisado="$sha_revisado"
 
   # Una marca vieja no es media revisión: es una revisión de otro código. Se
   # dice cuál era, porque el caso normal es «revisé, y luego commiteé una cosa
@@ -242,6 +269,134 @@ exigir_solo_md() {                      # exigir_solo_md <qué-se-salta>
   paso "solo markdown: ${1:-me salto los frenos}"
 }
 
+# ── El tramo de riesgo del diff ─────────────────────────────────────────────
+# La generalización de `--solo-md` *(17-08-2026)*. Aquel atajo descubrió lo que
+# valía: el freno lo elige un guión leyendo el diff, no el agente que acaba de
+# decidir que lo suyo es sencillo. Lo que faltaba era el resto de la escalera —
+# porque revisar a `max` un cambio de veinte líneas cuesta lo mismo que revisar
+# a `max` uno de dos mil, y ese coste se pagaba en cada rama.
+#
+# Cuatro tramos y el nivel de `/code-review` que le toca a cada uno:
+#
+#   solo-md    ni un fichero fuera de .md         → ninguna revisión
+#   trivial    ≤30 líneas, sin ficheros nuevos    → low
+#   normal     lo demás                           → high
+#   sensible   ruta delicada, o >600 líneas       → max
+#
+# Los dos umbrales salen del entorno para que la matriz pueda probarlos sin
+# escribir seiscientas líneas de mentira.
+NIVELES_ORDEN="ninguno low medium high max"
+
+orden_de_nivel() {                      # orden_de_nivel <nivel> → 0..4
+  local i=0 n
+  for n in $NIVELES_ORDEN; do
+    [ "$n" = "${1:-}" ] && { printf '%s' "$i"; return 0; }
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# Qué es «delicado» lo dice cada repositorio en `.claude/rutas-sensibles`, una
+# glob por línea. Se lee la copia de la RAÍZ, no la del worktree, y eso es a
+# propósito: leerla de la rama dejaría que una rama se rebajara el listón
+# borrando de la lista justo lo que va a tocar. Por lo mismo, el propio fichero
+# está en la lista de serie —cambiarlo es un cambio delicado— y el que decide es
+# `main`, o sea una fusión que ya pasó por aquí.
+RUTAS_SENSIBLES_DE_SERIE='*hooks/*
+*bin/*.sh
+*migracion*
+*migration*
+*auth*
+.github/workflows/*
+*settings.json
+*rutas-sensibles
+verificar.sh'
+
+rutas_sensibles() {
+  local fichero="$raiz/.claude/rutas-sensibles"
+  if [ -f "$fichero" ]; then
+    # Se admiten comentarios y líneas en blanco; sin ellos, un fichero que
+    # alguien documenta deja de poder documentarse.
+    grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$fichero" || true
+  else
+    printf '%s\n' "$RUTAS_SENSIBLES_DE_SERIE"
+  fi
+}
+
+# Deja puestas: tramo, nivel, motivo, lineas_diff.
+#
+# Sale 1 si no ha podido comparar la rama con su base, y entonces NO deja tramo
+# puesto: quien lo llame tiene que morir, por lo mismo que `exigir_solo_md` —un
+# freno que no sabe responder tiene que decir que no, porque el lado permisivo
+# es no tener freno justo los días raros.
+clasificar_diff() {
+  local base="$principal" tocados nuevos patron f sensible=0 fichero_malo="" patron_malo=""
+
+  if [ "$hubo_remoto" = 1 ]; then
+    base="origin/$principal"
+    [ "${ya_traido:-0}" = 1 ] || {
+      git -C "$raiz" fetch origin --quiet --prune
+      ya_traido=1
+    }
+  fi
+
+  tocados=$(git -C "$raiz" -c core.quotePath=false \
+              diff --name-only --no-renames "$base...$rama") || return 1
+  # Los binarios salen con `-` en las dos columnas y no se cuentan: sumarlos
+  # como cero es más honesto que inventarles un tamaño en líneas.
+  lineas_diff=$(git -C "$raiz" diff --numstat --no-renames "$base...$rama" |
+                  awk '$1 != "-" { n += $1 + $2 } END { print n + 0 }') || return 1
+  nuevos=$(git -C "$raiz" -c core.quotePath=false \
+             diff --name-only --no-renames --diff-filter=A "$base...$rama" |
+             grep -c . || true)
+
+  if [ -z "$tocados" ]; then
+    tramo=vacio; nivel=ninguno; motivo="el diff no toca ningún fichero"
+    return 0
+  fi
+
+  # El mismo criterio que `--solo-md`, y llamando a la misma función: dos formas
+  # de contestar «¿esto es solo markdown?» se separan en cuanto alguien arregla
+  # una sola.
+  local sobran
+  sobran=$(diff_no_md) || return 1
+  if [ -z "$sobran" ]; then
+    tramo=solo-md; nivel=ninguno; motivo="todo lo que toca acaba en .md"
+    return 0
+  fi
+
+  # Los paréntesis de apertura en los patrones del `case` no son adorno: el bash
+  # 3.2 de Apple —el que ejecuta los hooks— rechaza un `case` sin ellos cuando
+  # vive dentro de `$( )`, y esta función se llama así.
+  while IFS= read -r patron; do
+    [ -n "$patron" ] || continue
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      case "$f" in
+        ($patron) sensible=1; fichero_malo="$f"; patron_malo="$patron"; break 2 ;;
+      esac
+    done <<FICHEROS
+$tocados
+FICHEROS
+  done <<PATRONES
+$(rutas_sensibles)
+PATRONES
+
+  if [ "$sensible" = 1 ]; then
+    tramo=sensible; nivel=max
+    motivo="toca $fichero_malo, que casa con '$patron_malo'"
+  elif [ "$lineas_diff" -gt "${LIMITE_GRANDE:-600}" ]; then
+    tramo=sensible; nivel=max
+    motivo="$lineas_diff líneas cambiadas (más de ${LIMITE_GRANDE:-600})"
+  elif [ "$lineas_diff" -le "${LIMITE_TRIVIAL:-30}" ] && [ "$nuevos" -eq 0 ]; then
+    tramo=trivial; nivel=low
+    motivo="$lineas_diff líneas, ningún fichero nuevo y nada delicado"
+  else
+    tramo=normal; nivel=high
+    motivo="$lineas_diff líneas y $nuevos fichero(s) nuevo(s), nada delicado"
+  fi
+}
+
 # ── La PR ───────────────────────────────────────────────────────────────────
 # Lo único que hace falta saber ANTES de gastar tiempo en verificar y en revisar:
 # que haya algo que empujar. Vivía dentro de `empujar_y_abrir_pr`, o sea DESPUÉS
@@ -311,6 +466,10 @@ hay_ci_de_pr() {                        # hay_ci_de_pr <directorio>
 # Sale 0 si está verde, 1 si está rojo, 2 si no hay checks. Imprime el porqué.
 esperar_ci() {                          # esperar_ci [--vigilar]
   local vigilar=0 salida hay_workflows espera malos corriendo
+  # Global a propósito —lo lee `anotar_rojo`—, y vacía desde ya: hay dos salidas
+  # tempranas antes de que se llene, y bajo `set -u` mencionarla sin haberla
+  # tocado mataría a quien la lea.
+  checks_malos=""
 
   [ "${1:-}" = --vigilar ] && vigilar=1
 
@@ -375,6 +534,11 @@ esperar_ci() {                          # esperar_ci [--vigilar]
   # 3. El veredicto, leído del JSON y solo de ahí.
   malos=$(printf '%s' "$salida" |
     jq -r '.[] | select(.bucket == "fail" or .bucket == "cancel") | "    \(.name)  \(.link)"')
+  # Los nombres a secas, para que `anotar_rojo` pueda comparar esta ronda con
+  # las anteriores. Ordenados y sin repetir: lo que importa es el conjunto.
+  checks_malos=$(printf '%s' "$salida" |
+    jq -r '.[] | select(.bucket == "fail" or .bucket == "cancel") | .name' |
+    sort -u | tr '\n' ' ')
   if [ -n "$malos" ]; then
     aviso "" "El CI no está verde:" ""
     printf '%s\n' "$malos" >&2
@@ -392,6 +556,73 @@ esperar_ci() {                          # esperar_ci [--vigilar]
     return 1
   fi
   return 0
+}
+
+# ── Las rondas contra un CI rojo ────────────────────────────────────────────
+# Un rojo se arregla sin preguntar, pero un bucle contra un rojo que no se va
+# —un flaky, un secreto que falta— quema rondas de CI y revisiones de Opus sin
+# mover nada. El freno existía desde el 14-08-2026, y vivía en la cabeza del
+# modelo: «apunta los nombres de cada ronda y compáralos contra todas las
+# anteriores». Eso es exactamente lo que un modelo hace mal y un fichero hace
+# bien, así que *(17-08-2026)* se muda aquí.
+#
+# El fichero vive al lado de la marca de revisión, en el directorio git del
+# worktree: no se commitea, no viaja, y se va con el worktree. Una línea por
+# ronda, «<sha> <tab> <nombres de los checks que fallaron>».
+ruta_rondas() {
+  local gitdir
+  gitdir=$(git -C "$ruta_wt" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+  printf '%s/rondas-ci' "$gitdir"
+}
+
+olvidar_rondas() {
+  local f
+  f=$(ruta_rondas) || return 0
+  rm -f "$f"
+}
+
+# Apunta esta ronda y deja puesto `parar` a 1 si hay que dejar de intentarlo.
+# Dos condiciones, y hacen falta las dos:
+#
+#   · tres rondas en rojo —o sea, dos arreglos automáticos ya gastados—;
+#   · o un check que YA falló en una ronda anterior y vuelve a fallar, aunque
+#     entre medias fallara otro distinto. Con `--fail-fast` los hermanos salen
+#     como `cancel`, que también cuenta como rojo, así que el nombre del que
+#     falla rota solo y «dos veces seguidas» no distinguiría nada.
+anotar_rojo() {
+  local f cabeza previos nombre rondas repetido=""
+  parar=0
+  f=$(ruta_rondas) || return 0
+  cabeza=$(git -C "$ruta_wt" rev-parse HEAD)
+
+  # Antes de apuntar, ¿alguno de los de ahora ya falló con OTRO commit? Con el
+  # mismo commit no cuenta: relanzar sin tocar nada no es una ronda nueva.
+  previos=$(grep -v "^$cabeza	" "$f" 2>/dev/null || true)
+  # El `if` completo y no un `&& repetido=…`: bajo `set -e` una lista `a && b`
+  # cuyo primer trozo falla deja el estado en 1, y aquí eso se paga tarde y en
+  # otro sitio.
+  for nombre in $checks_malos; do
+    if printf '%s' "$previos" | grep -qF "$nombre"; then repetido="$nombre"; fi
+  done
+
+  grep -q "^$cabeza	" "$f" 2>/dev/null ||
+    printf '%s\t%s\n' "$cabeza" "$checks_malos" >> "$f"
+  rondas=$(grep -c . "$f" 2>/dev/null || true)
+  [ -n "$rondas" ] || rondas=1
+
+  if [ -n "$repetido" ]; then
+    parar=1
+    aviso "" \
+      "PARO: '$repetido' ya había fallado en una ronda anterior." \
+      "Un rojo que vuelve no lo arregla otra pasada: míralo tú."
+  elif [ "$rondas" -ge "${RONDAS_MAXIMAS:-3}" ]; then
+    parar=1
+    aviso "" \
+      "PARO: van $rondas rondas en rojo, y el arreglo automático son dos." \
+      "El tiempo y el dinero son tuyos: mira los jobs de arriba."
+  else
+    aviso "" "Ronda $rondas en rojo. Quedan $(( ${RONDAS_MAXIMAS:-3} - rondas )) de arreglo automático."
+  fi
 }
 
 # ── ¿Ese verde probó el main de AHORA? ──────────────────────────────────────

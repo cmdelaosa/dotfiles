@@ -29,14 +29,16 @@ sostiene: son dos preguntas distintas y por eso son dos guiones.
 | `claude/hooks/dotfiles-al-dia.sh` | Avisa si la máquina y este repositorio han dejado de coincidir |
 | `claude/hooks/probar-*.sh` | Las matrices de los dos hooks bloqueantes (64 y 57 casos) |
 | `claude/bin/abrir-rama.sh` | Abre la rama **y** su worktree `wt<rama>` desde `origin/<principal>` recién traído, y rechaza los nombres que no dicen nada |
-| `claude/bin/probar-rama.sh` | Lanza el `verificar.sh` de la rama, exige que el diff esté revisado, empuja, abre la PR y espera al CI. No fusiona nunca, y **no levanta nada** si no se pide: con `--con-pila` (o `--solo-pila` después) monta la pila local de esa rama con una **copia** de los datos. Con `--solo-md` se salta los dos frenos —una rama de solo markdown no ejecuta nada—, y comprueba el diff antes de saltárselos |
-| `claude/bin/marcar-revisado.sh` | Sella el HEAD que ya ha pasado por el revisor. Caduca con el commit siguiente, que es lo que hace que el sello signifique algo |
+| `claude/bin/probar-rama.sh` | Lanza el `verificar.sh` de la rama, exige que el diff esté revisado **al nivel que pide su tramo**, empuja y abre la PR. La espera del CI va aparte, con `--esperar-ci`, para que la pregunta de la pila no cueste doce minutos; y cuando el CI sale rojo, lleva él la cuenta de las rondas y dice `PARO:` cuando no vale la pena otra. No fusiona nunca, y **no levanta nada** si no se pide: con `--con-pila` (o `--solo-pila` después) monta la pila local de esa rama con una **copia** de los datos. Con `--solo-md` se salta los dos frenos —una rama de solo markdown no ejecuta nada—, y comprueba el diff antes de saltárselos |
+| `claude/bin/clasificar-diff.sh` | Lee el diff y dice de qué tramo es —`solo-md`, `trivial`, `normal`, `sensible`— y qué revisión pide: ninguna, `low`, `high` o `max`. Lo delicado lo declara cada repo en `.claude/rutas-sensibles`, y se lee la copia de `main` para que una rama no se rebaje el listón |
+| `claude/bin/marcar-revisado.sh` | Sella el HEAD que ya ha pasado por el revisor **y con qué nivel**. Caduca con el commit siguiente, y el nivel se teclea: una marca que se escribiera sola diría siempre que sí |
 | `claude/bin/cerrar-rama.sh` | Recomprueba el verde, comprueba que no es anterior al `main` de ahora, fusiona, despliega si el repo tiene el contrato de cmdlo, y limpia pila, worktree y las dos ramas. Con `--solo-md` no despliega y un «sin checks» no le impide fusionar |
 | `claude/bin/lib-ramas.sh` | Lo que comparten los tres: resolver el repo, los frenos, el CI, la pila |
 | `claude/bin/probar-ramas.sh` | La matriz de los cuatro (244 casos), con GitHub, Docker, curl y nc de mentira |
 | `claude/skills/` | `rama`, `probar`, `cerrar` (el flujo de ramas), más `despliega`, `grill-me` y `new-project` |
-| `verificar.sh` | Sintaxis de todos los guiones y las tres matrices. Lo lanza `probar-rama.sh` antes de empujar, así que un error se ve aquí y no doce minutos después en el CI |
-| `.github/workflows/ci.yml` | Un trabajo, y es **este mismo `verificar.sh`**. El verde de la PR y el de tu portátil son la misma pregunta, no dos listas que se desincronizan |
+| `verificar.sh` | Sintaxis de todos los guiones, el presupuesto de tamaño del `CLAUDE.md`, y las tres matrices **solo si el cambio toca `claude/bin` o `claude/hooks`**: un freno de antes del push tiene que costar segundos, y el CI entero de este repo tarda 32 |
+| `docs/porques.md` | Por qué es cada regla como es. No lo carga nadie: se lee el día que una regla parezca arbitraria |
+| `.github/workflows/ci.yml` | Un trabajo, y es **este mismo `verificar.sh --todo`**. El verde de la PR y el de tu portátil son la misma pregunta, no dos listas que se desincronizan |
 | `claude/output-styles/concise.md` | El estilo que referencia `settings.json`; sin él, la referencia queda coja |
 | `claude/templates/project/` | El esqueleto que usa el skill `new-project` |
 

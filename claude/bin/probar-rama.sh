@@ -14,9 +14,12 @@
 # `--con-pila` al lanzarlo, o `--solo-pila` más tarde, cuando te apetezca verla.
 #
 # Quien pregunta es la skill `probar`, y pregunta **con el CI ya corriendo**
-# *(14-08-2026)*: lanza esto de fondo, vigila la salida hasta «espero al CI de
-# la PR #N» —esa línea es contrato, con su prueba en la matriz— y consulta
-# mientras el CI quema sus minutos, para que la respuesta no cueste esperar.
+# *(14-08-2026)*. Cómo lo consigue cambió el 17-08-2026: antes lanzaba esto de
+# fondo y sondeaba su salida cada pocos segundos hasta ver «espero al CI de la
+# PR #N», y cada sondeo es un turno que reenvía el contexto entero —doce minutos
+# de CI salían por decenas de turnos completos para leer una línea—. Ahora la
+# cadena va partida en dos: `--sin-ci` empuja y abre la PR en segundos, ahí se
+# pregunta, y `--esperar-ci` se queda esperando de fondo. Nadie sondea nada.
 # Aquí abajo solo hay banderas; el guión no pregunta nada por su cuenta, porque
 # casi siempre corre en segundo plano y una pregunta ahí no la lee nadie. Por lo
 # mismo, **las despedidas avisan por el sistema**: si el final normal ya no es
@@ -44,11 +47,16 @@ set -Eeuo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib-ramas.sh"
 
 rama_arg=""; forzar=0; sin_ci=0; sin_verificar=0; sin_revisar=0; solo_md=0
-pidio_con=0; pidio_solo=0
+pidio_con=0; pidio_solo=0; pidio_esperar=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --forzar)        forzar=1 ;;
     --sin-ci)        sin_ci=1 ;;
+    # El segundo tiempo de la cadena partida *(17-08-2026)*: la PR ya está
+    # abierta y aquí solo se espera al CI. Lo que compra es que la pregunta de
+    # la pila se haga con el push recién hecho —segundos— en vez de obligar a
+    # la skill a sondear la salida de un guión que va a tardar doce minutos.
+    --esperar-ci)    pidio_esperar=1 ;;
     --sin-verificar) sin_verificar=1 ;;
     --sin-revisar)   sin_revisar=1 ;;
     # El atajo de la documentación: ni verificar.sh ni revisión, porque no hay
@@ -60,13 +68,14 @@ while [ $# -gt 0 ]; do
     # ese camino sería volver a pasar por todo lo que ya pasó hace diez minutos.
     --solo-pila)     pidio_solo=1 ;;
     -h | --help)
-      morir "Uso: probar-rama.sh [<rama>] [--forzar] [--sin-ci]" \
+      morir "Uso: probar-rama.sh [<rama>] [--forzar] [--sin-ci] [--esperar-ci]" \
         "                        [--sin-verificar] [--sin-revisar] [--solo-md]" \
         "                        [--con-pila | --solo-pila]" \
         "" \
         "  <rama>            la que se prueba. Por defecto, la del directorio actual." \
         "  --forzar          sigue aunque haya cambios sin guardar." \
         "  --sin-ci          no espera al CI." \
+        "  --esperar-ci      solo espera al CI de la PR ya abierta." \
         "  --sin-verificar   no lanza el verificar.sh de la rama." \
         "  --sin-revisar     empuja aunque el diff no esté revisado." \
         "  --solo-md         rama de solo markdown: ni verificar.sh ni revisión." \
@@ -117,9 +126,28 @@ if [ "$solo_md" = 1 ]; then
           "La diferencia es que --solo-md comprueba antes que el diff sea solo .md."
 fi
 
+# Y lo mismo con el segundo tiempo: `--esperar-ci` no comprueba, no revisa y no
+# empuja —la PR ya está abierta—, así que cualquier bandera de las que perdonan
+# eso sugiere que hace falta escribirla para que se la salte.
+if [ "$pidio_esperar" = 1 ]; then
+  sobra=""
+  [ "$pidio_solo"    != 1 ] || sobra="$sobra --solo-pila"
+  [ "$pidio_con"     != 1 ] || sobra="$sobra --con-pila"
+  [ "$sin_ci"        != 1 ] || sobra="$sobra --sin-ci"
+  [ "$sin_verificar" != 1 ] || sobra="$sobra --sin-verificar"
+  [ "$sin_revisar"   != 1 ] || sobra="$sobra --sin-revisar"
+  [ "$solo_md"       != 1 ] || sobra="$sobra --solo-md"
+  [ "$forzar"        != 1 ] || sobra="$sobra --forzar"
+  [ -z "$sobra" ] ||
+    morir "--esperar-ci solo mira el CI de la PR que ya está abierta; sobra:$sobra" \
+          "Ni comprueba, ni revisa, ni empuja, ni levanta nada." \
+          "La pila, cuando el CI conteste:  probar-rama.sh $rama_arg --solo-pila"
+fi
+
 hacer_pila=0; hacer_pr=1
 [ "$pidio_con"  != 1 ] || hacer_pila=1
 [ "$pidio_solo" != 1 ] || { hacer_pila=1; hacer_pr=0; }
+[ "$pidio_esperar" != 1 ] || hacer_pr=0
 
 resolver_repo "$rama_arg" probar
 [ -n "$ruta_wt" ] || morir "La rama '$rama' no tiene worktree." \
@@ -169,7 +197,11 @@ despedida() {                           # despedida <primera-línea…>
   aviso "" "$@"
   [ -z "$nota_ci" ] || aviso "" "$nota_ci"
   aviso "" \
-    "  PR:      ${url_pr:-todavía no hay ninguna}" \
+    "  PR:      ${url_pr:-todavía no hay ninguna}"
+  # Con `--sin-ci` esto es el primer tiempo, y lo que sigue no es cerrar: es
+  # esperar al CI. Decirlo aquí es lo que evita que el segundo tiempo se olvide.
+  [ "$sin_ci" != 1 ] || aviso "  CI:      probar-rama.sh $rama --esperar-ci"
+  aviso \
     "$siguiente" \
     "$cierre"
 }
@@ -178,6 +210,50 @@ despedida() {                           # despedida <primera-línea…>
 # ha comprobado es lo único que ninguno de estos guiones puede permitirse decir,
 # y con `--sin-ci` llegó a decirlo de verdad sobre una PR en rojo.
 nota_ci=""
+
+# El CI, que ahora lo miran dos caminos: la cadena entera y el `--esperar-ci`
+# del segundo tiempo. Estaba escrito una vez porque solo había un camino; con
+# dos, una copia se separa de la otra el día que alguien arregla una sola.
+#
+# Códigos de salida, que la skill lee: 1 es un rojo que toca arreglar, y 3 es un
+# rojo con el freno de las rondas echado —ahí no se relanza, se mira—.
+vigilar_ci() {
+  paso "espero al CI de la PR #$numero"
+  ci=0; esperar_ci --vigilar || ci=$?
+  case "$ci" in
+    0) paso "CI en verde"
+       nota_ci="Su CI está verde."
+       # El verde cierra la cuenta: las rondas de un rojo que ya se arregló no
+       # pueden sumarse a las del próximo, que sería otro rojo y otra historia.
+       olvidar_rondas ;;
+    # El rojo frena igual con `--solo-md`. No es una contradicción: lo que el
+    # atajo dice es que un cambio de prosa no necesita examen propio, no que
+    # se pueda fusionar por encima de un examen ya suspendido. En dotfiles el
+    # CI de una PR de markdown corre entero —no hay `paths-ignore`—, así que
+    # este rojo es un rojo de verdad.
+    1) anotar_rojo
+       if [ "$parar" = 1 ]; then
+         despedida "El CI no está verde, y el arreglo automático se ha acabado."
+         avisar "CI en rojo: paro y te lo dejo" "$url_pr"
+         exit 3
+       fi
+       despedida "El CI no está verde. Arréglalo en la rama y vuelve a lanzarme."
+       avisar "El CI no está verde" "$url_pr"
+       exit 1 ;;
+    # «Sin checks» es lo que welzy provoca a propósito con su `paths-ignore` en
+    # las PRs de documentación. Fuera del atajo eso para la cadena —«sin
+    # checks» no es un aprobado—; dentro, pararse ahí sería plantar el freno
+    # justo en el caso para el que se pidió el atajo.
+    2) if [ "$solo_md" = 1 ]; then
+         paso "sin checks, y con solo markdown eso no frena nada"
+         nota_ci="Su CI no ha disparado ningún check, que es lo normal en una PR de solo markdown."
+       else
+         despedida "Sin un verde no hay nada que valga la pena probar."
+         avisar "Sin checks: la PR espera" "$url_pr"
+         exit 0
+       fi ;;
+  esac
+}
 
 if [ "$hacer_pr" = 1 ]; then
   # El árbol sucio solo estropea una PR, que es lo que sale incompleto; una pila
@@ -213,37 +289,25 @@ if [ "$hacer_pr" = 1 ]; then
   esac
 
   if [ "$sin_ci" != 1 ]; then
-    paso "espero al CI de la PR #$numero"
-    ci=0; esperar_ci --vigilar || ci=$?
-    case "$ci" in
-      0) paso "CI en verde"
-         nota_ci="Su CI está verde." ;;
-      # El rojo frena igual con `--solo-md`. No es una contradicción: lo que el
-      # atajo dice es que un cambio de prosa no necesita examen propio, no que
-      # se pueda fusionar por encima de un examen ya suspendido. En dotfiles el
-      # CI de una PR de markdown corre entero —no hay `paths-ignore`—, así que
-      # este rojo es un rojo de verdad.
-      1) despedida "El CI no está verde. Arréglalo en la rama y vuelve a lanzarme."
-         avisar "El CI no está verde" "$url_pr"
-         exit 1 ;;
-      # «Sin checks» es lo que welzy provoca a propósito con su `paths-ignore` en
-      # las PRs de documentación. Fuera del atajo eso para la cadena —«sin
-      # checks» no es un aprobado—; dentro, pararse ahí sería plantar el freno
-      # justo en el caso para el que se pidió el atajo.
-      2) if [ "$solo_md" = 1 ]; then
-           paso "sin checks, y con solo markdown eso no frena nada"
-           nota_ci="Su CI no ha disparado ningún check, que es lo normal en una PR de solo markdown."
-         else
-           despedida "Sin un verde no hay nada que valga la pena probar."
-           avisar "Sin checks: la PR espera" "$url_pr"
-           exit 0
-         fi ;;
-    esac
+    vigilar_ci
   else
+    # El primer tiempo de la cadena partida acaba aquí, en segundos: empujado,
+    # PR abierta y nadie esperando doce minutos para poder preguntar nada.
     nota_ci="Su CI está sin mirar, que es lo que pide --sin-ci."
   fi
 else
   recordar_url_pr
+
+  if [ "$pidio_esperar" = 1 ]; then
+    # Sin PR no hay CI que mirar, y decirlo así —en vez de morir por un `numero`
+    # vacío tres líneas más abajo— es la diferencia entre entender qué falta y
+    # leerse el guión.
+    numero=$($GH pr view "$rama" --json number --jq .number 2>/dev/null) || numero=""
+    [ -n "$numero" ] ||
+      morir "La rama '$rama' no tiene ninguna PR que mirar." \
+            "El primer tiempo la abre:  probar-rama.sh $rama --sin-ci"
+    vigilar_ci
+  fi
 fi
 
 # ── La pila, solo si se ha pedido ───────────────────────────────────────────
