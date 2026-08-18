@@ -48,7 +48,7 @@ jobs:
     # que esta variable sirva hay que registrar otro en este repositorio, o
     # hacerlo público —que además regala la protección de rama que hoy no hay—.
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    # Las tres matrices tardan minuto y medio en un portátil. Diez es margen de
+    # Las cinco matrices tardan minuto y medio en un portátil. Diez es margen de
     # sobra y a la vez un tope para que un `sleep` mal puesto no se coma la cuota.
     timeout-minutes: 10
     steps:
@@ -65,7 +65,7 @@ jobs:
       # comprobación entera solo vale lanzada en el Mac; correrla también aquí
       # cuesta cero y pilla los errores de sintaxis de toda la vida.
       #
-      # `--todo` desde el 17-08-2026: en local las tres matrices solo se lanzan
+      # `--todo` desde el 17-08-2026: en local las matrices solo se lanzan
       # si el cambio toca `claude/bin` o `claude/hooks`, porque allí el guión es
       # el freno de antes del push y tiene que costar segundos. Aquí no: el verde
       # de una PR tiene que significar que se ha probado todo, hay medio minuto
