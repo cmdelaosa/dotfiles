@@ -72,6 +72,7 @@ probar publico BLOQUEA "clave de AWS"           c.txt 'AKIAIOSFODNN7EXAMPLE'
 probar publico BLOQUEA "identidad de age"       c.txt 'AGE-SECRET-KEY-1QQPQZRFQ7X8VJ4KLM9NPZ2WXYT'
 probar publico BLOQUEA "contraseña con valor de verdad" c.txt 'password: "s3cr3t0LargoDeVerdad123"'
 probar publico BLOQUEA "fichero .env"           .env 'FOO=bar'
+probar publico BLOQUEA "fichero .env.local"     .env.local 'DB_HOST=db.interno'
 probar privado BLOQUEA "fichero .pem"           id.pem 'lo que sea'
 
 echo "--- ...pero lo que se escribe BIEN no se marca ---"
@@ -80,6 +81,7 @@ echo "--- ...pero lo que se escribe BIEN no se marca ---"
 probar publico PASA "token por variable"        c.sh 'TOKEN=$GITHUB_TOKEN'
 probar publico PASA "contraseña por variable"   c.sh 'password: ${PGPASSWORD}'
 probar publico PASA "un .env.example"           .env.example 'FOO=pon-aqui-lo-tuyo'
+probar publico PASA "un .env.dist"              .env.dist 'FOO=pon-aqui-lo-tuyo'
 probar publico PASA "prosa que habla de tokens" doc.md 'El token se lee de la variable, nunca del fichero.'
 
 echo "--- datos de la máquina: solo pesan en un repositorio PÚBLICO ---"
@@ -98,6 +100,13 @@ echo "--- lo que en este repositorio es normal y no se toca ---"
 probar publico PASA "ruta local del Mac"        s.json '"command": "/Users/cmo/.claude/hooks/git-no-main.sh"'
 probar publico PASA "código corriente"          a.ts   'export const suma = (a: number, b: number) => a + b'
 probar publico PASA "un dominio público a secas" doc.md 'La documentación está en https://docs.github.com/es'
+
+echo "--- el nombre del fichero no puede esconderlo ---"
+# La lista de ficheros se leia partida por espacios, asi que este se leia como
+# dos que no existen y su contenido no lo miraba nadie: rc=0 con una clave de
+# AWS dentro. Y sin `core.quotePath=false`, el de los acentos salia escapado.
+probar publico BLOQUEA "nombre con espacios"    "mi fichero.txt" 'AKIAIOSFODNN7EXAMPLE'
+probar publico BLOQUEA "nombre con acentos"     "configuracion-ñ.txt" 'AKIAIOSFODNN7EXAMPLE'
 
 echo "--- lo que ni siquiera es un commit ---"
 probar publico PASA "git status"                c.txt 'AKIAIOSFODNN7EXAMPLE' 'git status'
@@ -147,6 +156,29 @@ for caso in "git commit -m x:PASA" "git commit -am x:BLOQUEA" "git commit -a -m 
   if [ "$codigo" -eq 2 ]; then real=BLOQUEA; else real=PASA; fi
   if [ "$real" = "$esperado" ]; then
     printf '  ok    %-7s %s\n' "$real" "$orden (modificado sin añadir)"
+  else
+    printf '  FALLO esperaba %s y dio %s: %s\n' "$esperado" "$real" "$orden"
+    fallos=$((fallos + 1))
+  fi
+done
+
+echo "--- y el MENSAJE no amplia el alcance ---"
+# Un mensaje que HABLA del flag `-a` no pide `-a`. Antes de mirar la orden sin
+# lo entrecomillado, esa frase llevaba el alcance a HEAD y bloqueaba por un
+# fichero que no entra en el commit — el falso positivo que apaga un hook.
+printf 'limpio\n' > "$TMP/publico/otro.txt"
+git -C "$TMP/publico" add otro.txt
+for caso in 'git commit -m "arregla el flag -a de la CLI":PASA' \
+            'git commit -m "sin banderas":PASA' \
+            'git commit -am "esto si lleva -a":BLOQUEA'; do
+  orden=${caso%:*}; esperado=${caso##*:}
+  codigo=0
+  printf '{"cwd":%s,"tool_input":{"command":%s}}' \
+    "$(printf '%s' "$TMP/publico" | jq -Rs .)" "$(printf '%s' "$orden" | jq -Rs .)" |
+    bash "$hook" > /dev/null 2>&1 || codigo=$?
+  if [ "$codigo" -eq 2 ]; then real=BLOQUEA; else real=PASA; fi
+  if [ "$real" = "$esperado" ]; then
+    printf '  ok    %-7s %s\n' "$real" "$orden"
   else
     printf '  FALLO esperaba %s y dio %s: %s\n' "$esperado" "$real" "$orden"
     fallos=$((fallos + 1))

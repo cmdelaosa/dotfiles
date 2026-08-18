@@ -97,11 +97,19 @@ git -C "$destino" rev-parse --git-dir > /dev/null 2>&1 || exit 0
 # Qué se va a commitear. Con `-a`/`--all` entra también lo modificado sin añadir,
 # y si solo se mirara el índice ese sería justo el camino que no ve nadie.
 rango="--cached"
-case " $norm " in
+# La bandera se busca en la orden SIN lo entrecomillado: un mensaje que hable
+# del flag —`git commit -m "arregla el flag -a de la CLI"`— no pide `-a`, y
+# hasta arreglarlo ampliaba el alcance a HEAD y bloqueaba por un fichero que no
+# entraba en ese commit. Un falso positivo así es lo que acaba con el hook
+# desactivado, que es peor que no tenerlo.
+sin_citas=$(printf '%s' "$norm" | sed -e 's/"[^"]*"//g' -e "s/'[^']*'//g")
+case " $sin_citas " in
   *" -a "* | *" --all "* | *" -am "*) rango="HEAD" ;;
 esac
 
-ficheros=$(git -C "$destino" diff $rango --name-only 2>/dev/null)
+# `core.quotePath=false` para que un nombre con acentos no salga entrecomillado
+# y con escapes, que es como dejaba de casar con el fichero de verdad.
+ficheros=$(git -C "$destino" -c core.quotePath=false diff $rango --name-only 2>/dev/null)
 [ -z "$ficheros" ] && exit 0
 
 # ── Listón 1: credenciales. En cualquier repositorio ────────────────────────
@@ -151,7 +159,26 @@ elif command -v gh > /dev/null 2>&1; then
   repo_gh=$(printf '%s' "$url" | sed -E 's#^git@github\.com:##; s#^https://github\.com/##; s#\.git$##')
   case "$repo_gh" in
     */*)
-      privado=$(GH_NO_UPDATE_NOTIFIER=1 gh repo view "$repo_gh" --json isPrivate -q .isPrivate 2>/dev/null)
+      # Con tope de cinco segundos, y no a pelo: esto es un PreToolUse, o sea
+      # que corre DELANTE de cada commit. Un `gh` colgado —red caída, un proxy
+      # que se traga la conexión— dejaría la sesión plantada en el único sitio
+      # donde no se puede pulsar Ctrl-C, y encima antes de que la memoria esté
+      # caliente, que es justo el primer commit en un repositorio nuevo.
+      privado=""
+      if tmp_gh=$(mktemp 2>/dev/null); then
+        ( GH_NO_UPDATE_NOTIFIER=1 gh repo view "$repo_gh" \
+            --json isPrivate -q .isPrivate > "$tmp_gh" 2>/dev/null ) &
+        gh_pid=$!
+        esperas=0
+        while [ "$esperas" -lt 50 ] && kill -0 "$gh_pid" 2>/dev/null; do
+          sleep 0.1
+          esperas=$((esperas + 1))
+        done
+        kill "$gh_pid" 2>/dev/null
+        wait "$gh_pid" 2>/dev/null
+        privado=$(cat "$tmp_gh" 2>/dev/null)
+        rm -f "$tmp_gh"
+      fi
       case "$privado" in
         false) publico=si ;;
         true)  publico=no ;;
@@ -178,12 +205,19 @@ apuntar() {          # apuntar <fichero> <clase> <línea>
 "
 }
 
-for f in $ficheros; do
-  # Un fichero que por su NOMBRE no debería entrar nunca.
+# Línea a línea, y no `for f in $ficheros`: la lista se parte por espacios, así
+# que un fichero llamado «mi fichero.txt» se leía como dos que no existen y su
+# contenido no lo miraba nadie. Medido: una clave de AWS dentro de ese nombre
+# pasaba con rc=0.
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  # Un fichero que por su NOMBRE no debería entrar nunca. Las plantillas van
+  # PRIMERO: `.env.example` es lo contrario de una fuga, es la forma de que el
+  # secreto no esté.
   case "$f" in
-    *.env.example | *.env.sample | *.env.template) ;;
+    *.env.example | *.env.sample | *.env.template | *.env.dist) ;;
     *.pem | *.key | *id_rsa | *id_ed25519 | *.p12 | *.pfx | .env | *.env | \
-    *.env.production | *credentials.json)
+    .env.* | *.env.* | *credentials.json)
       hallazgos="${hallazgos}  $f
       el nombre ya lo dice: esto no se commitea
 "
@@ -209,7 +243,9 @@ PATRONES
   done <<PATRONES
 $MAQUINA
 PATRONES
-done
+done <<FICHEROS
+$ficheros
+FICHEROS
 
 [ -z "$hallazgos" ] && exit 0
 

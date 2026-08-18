@@ -56,6 +56,14 @@ orden=$(printf '%s\n' "$cmd" | awk '
 #
 # Precio conocido: un `bash -c "make check | tail"` deja de verse. Hay que
 # escribirlo a propósito, y el falso positivo se pagaría a diario.
+#
+# Y el otro precio, medido en la revisión: dos apóstrofos de prosa a los lados
+# de una tubería de verdad —`echo don't; make check | tail; echo won't`— se leen
+# como un tramo citado y se llevan la orden por delante, así que eso pasa. Se
+# deja así a sabiendas: lo contrario —no quitar lo citado, o no quitarlo cuando
+# contiene una tubería— cambia un falso NEGATIVO rarísimo por un falso positivo
+# corriente (`git commit -m "make check | tail mentía"`, bloqueado), y en un
+# freno que se dispara delante de cada orden ese cambio está al revés.
 sin_citas=$(printf '%s' "$orden" | sed -e 's/"[^"]*"//g' -e "s/'[^']*'//g")
 
 # Las puertas: lo que se lanza para saber si algo está bien. La lista es cerrada
