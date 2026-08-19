@@ -452,6 +452,13 @@ clasificar() { # clasificar <dir> <rama> [args…]
 # Un cambio que NO añade ficheros: toca el que ya existe. Es la diferencia entre
 # el tramo trivial y el normal, y `trabajar` no sirve para probarlo porque crea
 # uno nuevo cada vez.
+pendiente() { # pendiente <dir> <rama> [args…]
+  local d=$1; shift
+  ( cd "$d/repo" &&
+      LIMITE_TRIVIAL="${LIMITE_TRIVIAL:-30}" LIMITE_GRANDE="${LIMITE_GRANDE:-600}" \
+      "$bin/revision-pendiente.sh" "$@" )
+}
+
 retocar() { # retocar <ruta-del-worktree> <texto>
   [ -n "${1:-}" ] && [ -d "$1" ] ||
     { mal "retocar necesita un worktree y ha recibido '${1:-}'"; return 1; }
@@ -1394,6 +1401,81 @@ afirmar "sin --nivel no marca nada"        test "$marco" = 1
 afirmar "y manda mirar el tramo"           contiene "clasificar-diff.sh" "$msg"
 msg=$( ( cd "$d/repo" && "$bin/marcar-revisado.sh" sin-nivel --nivel altísimo ) 2>&1 ) && inventado=0 || inventado=1
 afirmar "un nivel inventado tampoco"       test "$inventado" = 1
+
+caso "revision-pendiente.sh: qué queda por leer, que no siempre es todo"
+# Lo que evita releer la rama entera cada vez que se le añade un commit. El
+# freno de `probar-rama.sh` NO se toca: esto solo dice por dónde empezar.
+d=$(montar)
+ruta=$(abrir "$d" nada-leido 2>/dev/null); retocar "$ruta" dos
+afirmar "sin marca, hay que leerlo todo" \
+        contiene "todo low" "$(pendiente "$d" nada-leido 2>/dev/null)"
+
+# Marca de este mismo HEAD: no hay nada que revisar, y decir «todo» aquí sería
+# mandar a releer lo que se acaba de leer.
+revisar "$d" nada-leido low >/dev/null 2>&1
+afirmar "con la marca al día, no queda nada" \
+        contiene "nada low" "$(pendiente "$d" nada-leido 2>/dev/null)"
+
+# El caso que justifica todo esto: rama revisada, un commit más encima. Lo que
+# falta es ese commit, no la rama.
+d=$(montar)
+ruta=$(abrir "$d" sigo-trabajando 2>/dev/null); tocar_delicado "$ruta"
+revisar "$d" sigo-trabajando max >/dev/null 2>&1
+marcado=$(git -C "$ruta" rev-parse HEAD)
+retocar "$ruta" tres
+salida=$(pendiente "$d" sigo-trabajando 2>/dev/null)
+afirmar "el ámbito es el SHA que se revisó"  contiene "$marcado" "$salida"
+afirmar "y el nivel NO se rebaja por ser un trozo pequeño" \
+        contiene "max" "$salida"
+negar   "no dice «todo»"                     contiene "todo" "$salida"
+# Y el freno sigue siendo el freno: saber qué falta no es haberlo leído.
+msg=$(probar_rama verde "$d" sigo-trabajando 2>&1) && paso_parcial=0 || paso_parcial=1
+afirmar "con la marca vieja, probar-rama.sh sigue sin empujar"  test "$paso_parcial" = 1
+afirmar "y manda mirar qué falta"  contiene "revision-pendiente.sh" "$msg"
+
+# Un rebase, un amend o un reset sacan de la historia el commit revisado, y un
+# rango contra un commit que ya no está no significa nada.
+d=$(montar)
+ruta=$(abrir "$d" con-amend 2>/dev/null); retocar "$ruta" dos
+revisar "$d" con-amend low >/dev/null 2>&1
+git -C "$ruta" commit -q --amend -m "fix: dos, reescrito"
+afirmar "una marca que dejó de ser antepasada manda leerlo todo" \
+        contiene "todo" "$(pendiente "$d" con-amend 2>/dev/null)"
+
+# Una marca de las de antes —solo el SHA— no dice con qué rigor se leyó, así que
+# no se hereda: lo que nadie escribió no se da por bueno.
+d=$(montar)
+ruta=$(abrir "$d" sin-nivel-marcado 2>/dev/null); retocar "$ruta" dos
+printf '%s' "$(git -C "$ruta" rev-parse HEAD)" > "$(git -C "$ruta" rev-parse --absolute-git-dir)/revisado"
+retocar "$ruta" tres
+afirmar "una marca sin nivel no hereda nada" \
+        contiene "todo" "$(pendiente "$d" sin-nivel-marcado 2>/dev/null)"
+
+# Y el caso que se escapa solo: la rama CRECE de tramo. Lo viejo se leyó a un
+# nivel que ya no basta, así que heredar el rango sería quedarse con una
+# revisión más floja de la que el diff pide ahora.
+d=$(montar)
+ruta=$(abrir "$d" ha-crecido 2>/dev/null); retocar "$ruta" dos
+revisar "$d" ha-crecido low >/dev/null 2>&1
+tocar_delicado "$ruta"
+salida=$(pendiente "$d" ha-crecido 2>/dev/null)
+afirmar "si el diff pasa a pedir más nivel, se lee todo otra vez" \
+        contiene "todo max" "$salida"
+
+# Una rama de solo prosa no pasa por el revisor, y mandarla a leer a esfuerzo
+# máximo es exactamente lo que el tramo `solo-md` existe para evitar.
+d=$(montar)
+ruta=$(abrir "$d" solo-prosa 2>/dev/null)
+printf 'documentado\n' >> "$ruta/LEEME.md"
+git -C "$ruta" add -A; git -C "$ruta" commit -qm "docs: prosa"
+afirmar "el tramo de solo markdown no manda revisar nada" \
+        contiene "nada ninguno" "$(pendiente "$d" solo-prosa 2>/dev/null)"
+
+# `--ambito` es para meterlo en un `$( )`: un solo campo y sin explicación.
+d=$(montar)
+ruta=$(abrir "$d" solo-el-ambito 2>/dev/null); retocar "$ruta" dos
+afirmar "--ambito imprime un único campo" \
+        test "$(pendiente "$d" solo-el-ambito --ambito 2>/dev/null)" = todo
 
 caso "probar-rama.sh: la cadena partida en dos"
 # El primer tiempo empuja y abre la PR sin esperar al CI; el segundo solo espera.

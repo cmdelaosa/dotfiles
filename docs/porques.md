@@ -121,6 +121,26 @@ mensaje: que el repositorio no tenga CI, o que lo tenga y esta PR no lo dispare
 repositorio no tiene CI» de welzy es falso, y convierte un repositorio con
 pruebas en uno que se fusiona a ojo.
 
+**Seguir trabajando en una rama revisada dejó de costar releerla entera**
+*(19-08-2026)*. La marca caduca con cada commit, y hasta hoy eso significaba
+volver a leer la rama COMPLETA para juzgar veinte líneas nuevas. Medido en erp
+entre el 10 y el 19 de agosto: de 64 ramas con PR, 24 tuvieron más de una ronda
+de CI, y en las 19 con código el 53 % de las líneas que el revisor leyó la
+segunda vez no habían cambiado desde la primera —31.284 de 59.497—. La idea
+empezó siendo «no revisar de cero al arreglar el CI», y medirlo la cambió: solo
+4 de esas ramas venían de un rojo —6 fallos en 107 ejecuciones—, así que el
+ahorro no estaba ahí, sino en el caso corriente de añadir un commit. Lo dice
+`revision-pendiente.sh`, y lo que **no** hace importa tanto como lo que hace: no
+toca el freno de `probar-rama.sh` —sigue exigiendo marca de ESTE HEAD y con
+nivel suficiente—, no rebaja el nivel al del trozo —una marca que dijera «lo
+viejo a max y lo nuevo a low» es una afirmación compuesta, y esas acaban
+mintiendo—, y cae a `todo` con cualquier duda: sin marca, marca sin nivel, marca
+que un rebase dejó fuera de la historia, o una rama que ha crecido de tramo.
+**El riesgo que queda es real y no lo cubre el guión**: un commit pequeño puede
+invalidar lo ya aprobado si cambia el contrato de algo —una firma, un
+invariante—, y ahí hay que pedir `todo` a mano. El CI en verde tapa lo que rompe
+la compilación o un test, no eso.
+
 **El despliegue es condicional**: `cerrar-rama.sh` solo llama a
 `cmdlo-infra/desplegar.sh` cuando el repositorio lleva el contrato de cmdlo
 —`ops/deploy/deploy.sh` **y** `.github/workflows/release.yml`—. Hoy eso es welzy

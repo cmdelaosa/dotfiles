@@ -188,9 +188,12 @@ exigir_revision() {                     # exigir_revision <sin_revisar>
   fi
   revisado="$sha_revisado"
 
-  # Una marca vieja no es media revisión: es una revisión de otro código. Se
-  # dice cuál era, porque el caso normal es «revisé, y luego commiteé una cosa
-  # más», y ahí ayuda saber que solo falta volver a pasar por lo nuevo.
+  # Una marca vieja no es media revisión: es una revisión de otro código. Pero
+  # tampoco es papel mojado, y desde el 19-08-2026 se dice qué parte sirve: si
+  # la marca es antepasada de HEAD, lo único sin leer es de ahí para acá, y
+  # `revision-pendiente.sh` lo dice con el rango hecho. El freno no se toca —lo
+  # que hay que traer sigue siendo una marca de ESTE HEAD y con nivel
+  # suficiente—; lo que cambia es que la salida ya no es «vuelve a empezar».
   [ -z "$revisado" ] ||
     aviso "" "La revisión que hay es de ${revisado:0:7}, y la rama va por ${cabeza:0:7}."
 
@@ -199,6 +202,7 @@ exigir_revision() {                     # exigir_revision <sin_revisar>
     "arreglos dentro, no antes de que los diga." \
     "" \
     "  En Claude Code:   la skill \`probar\` (/probar) — revisa, arregla, commitea y marca." \
+    "  Qué falta leer:   revision-pendiente.sh $rama" \
     "  Ya está revisado: marcar-revisado.sh $rama" \
     "  Saltárselo:       probar-rama.sh $rama --sin-revisar"
 }

@@ -43,9 +43,9 @@ asked for, not the first commit of three. It **never merges**.
 
 1. **`clasificar-diff.sh <branch>`** decides the review level from the diff: `solo-md` →
    none, `trivial` → low, `normal` → high, `sensible` → max. The script decides, not you.
-2. **`/code-review <branch> <level> --fix`**, once — not a second reviewer on top. Keep what's
-   right, **revert what's wrong and name the discards with their why**, commit, then
-   `marcar-revisado.sh <branch> --nivel <level>`. Any later commit expires the mark.
+2. **`revision-pendiente.sh <branch>`** says what's left to read (`nada`, `todo`, or a SHA);
+   **`/code-review <that> <level> --fix`**, once. Keep what's right, **revert what's wrong
+   and name the discards with their why**, commit, `marcar-revisado.sh --nivel <level>`.
 3. **`probar-rama.sh <branch> --sin-ci`** — verifies, pushes, opens the PR, in seconds.
 4. **Ask about the local stack right there**, with the PR open (skip it if there's no
    `docker-compose.yml`). "Levántalo" said at any point is already the answer.
