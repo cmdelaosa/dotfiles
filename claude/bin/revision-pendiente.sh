@@ -97,15 +97,20 @@ else
   elif [ -z "$nivel_revisado" ]; then
     ambito=todo
     motivo_ambito="la marca no dice con qué nivel se revisó (formato viejo)"
+  # El nivel se mira ANTES que el SHA, y ese orden es el arreglo de un fallo:
+  # al revés, una marca de este mismo HEAD pero revisada por debajo del tramo
+  # —`low` en una rama que pide `max`— salía como `nada`, o sea «no hay nada que
+  # leer», mientras `probar-rama.sh` se negaba a empujarla por eso mismo. Este
+  # guión y el freno tienen que contestar lo mismo o sobra uno de los dos.
+  elif [ "$tiene" -lt "$pide" ]; then
+    ambito=todo
+    motivo_ambito="lo revisado se leyó a '$nivel_revisado' y el diff pide '$nivel': $tramo"
   elif [ "$sha_revisado" = "$cabeza" ]; then
     ambito=nada
     motivo_ambito="la marca ya es de ${cabeza:0:7}, revisada a '$nivel_revisado'"
   elif ! git -C "$ruta_wt" merge-base --is-ancestor "$sha_revisado" "$cabeza" 2>/dev/null; then
     ambito=todo
     motivo_ambito="la marca (${sha_revisado:0:7}) no es antepasada de ${cabeza:0:7}: rebase, amend o reset"
-  elif [ "$tiene" -lt "$pide" ]; then
-    ambito=todo
-    motivo_ambito="lo revisado se leyó a '$nivel_revisado' y ahora el diff pide '$nivel': $tramo"
   else
     ambito="$sha_revisado"
     motivo_ambito="revisada a '$nivel_revisado' hasta ${sha_revisado:0:7}; falta de ahí a ${cabeza:0:7}"

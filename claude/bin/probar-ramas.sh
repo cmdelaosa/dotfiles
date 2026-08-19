@@ -1462,6 +1462,15 @@ salida=$(pendiente "$d" ha-crecido 2>/dev/null)
 afirmar "si el diff pasa a pedir más nivel, se lee todo otra vez" \
         contiene "todo max" "$salida"
 
+# La marca es de este mismo HEAD, pero se leyó por debajo del tramo. Decir
+# «nada» aquí sería contradecir al freno de `probar-rama.sh`, que rechaza esa
+# misma rama por ese mismo motivo: los dos tienen que contestar lo mismo.
+d=$(montar)
+ruta=$(abrir "$d" leida-floja 2>/dev/null); tocar_delicado "$ruta"
+revisar "$d" leida-floja low >/dev/null 2>&1
+afirmar "una marca de este HEAD pero corta de nivel manda leerlo todo" \
+        contiene "todo max" "$(pendiente "$d" leida-floja 2>/dev/null)"
+
 # Una rama de solo prosa no pasa por el revisor, y mandarla a leer a esfuerzo
 # máximo es exactamente lo que el tramo `solo-md` existe para evitar.
 d=$(montar)
