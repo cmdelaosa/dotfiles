@@ -43,16 +43,32 @@ niega a empujar si la marca de revisión dice un nivel más bajo del que pide el
 tramo. Quien pide el atajo es siempre quien acaba de decidir, él solo, que lo
 suyo es sencillo.
 
-## 2. La revisión: una, al nivel que salga
+## 2. La revisión: una, al nivel que salga, y solo sobre lo que nadie ha leído
 
-```
-/code-review <rama> <el-nivel-del-paso-1> --fix
+```bash
+~/.claude/bin/revision-pendiente.sh <rama>
 ```
 
-Sobre el diff de la rama entera contra `main`, no sobre lo último que tocaste. Y
-**una sola**: nada de pasar además el diff por el subagente `code-reviewer` —dos
-lecturas completas del mismo diff, las dos a esfuerzo máximo, era la mitad del
-coste de cada PR—. El subagente sigue estando para cuando el usuario lo pida.
+**En dotfiles, `./claude/bin/…`**, por lo mismo que el resto. Imprime **qué hay
+que leer**, que no siempre es la rama entera:
+
+| lo que imprime | qué significa | qué lanzas |
+|---|---|---|
+| `nada <nivel>` | la marca es de este HEAD | nada: al paso 3 |
+| `todo <nivel>` | no hay marca que heredar | `/code-review <rama> <nivel> --fix` |
+| `<sha> <nivel>` | falta lo de después de ahí | `/code-review <sha>..HEAD <nivel> --fix` |
+
+**Y una sola**: nada de pasar además el diff por el subagente `code-reviewer`
+—dos lecturas completas del mismo diff, las dos a esfuerzo máximo, era la mitad
+del coste de cada PR—. El subagente sigue estando para cuando el usuario lo pida.
+
+El tercer caso entra cuando **sigues trabajando en una rama ya revisada**. **El
+nivel no baja por ser un trozo** —lo pide el diff completo—, y el guión cae a
+`todo` con cualquier duda. Lo medido, en `docs/porques.md`.
+
+**Lo que esto NO ve**, y lo miras tú: si el commit nuevo cambia el contrato de
+algo ya aprobado —una firma, lo que devuelve, un invariante—, nadie vuelve a
+mirar las llamadas que se dieron por buenas. Ahí pide `todo` a mano.
 
 **Escribe el nivel siempre**: sin nivel, la skill reutiliza el último que se
 tecleó, que puede venir de cualquier otra cosa.
