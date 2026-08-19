@@ -1318,6 +1318,18 @@ salida=$(clasificar "$d" tramo-delicado 2>&1)
 afirmar "una ruta delicada pide max"   contiene "sensible max" "$salida"
 afirmar "y dice cuál y por qué patrón" contiene "hooks/freno.sh" "$salida"
 
+# Lo que decide qué se expone y dónde también es delicado *(18-08-2026)*. Dos
+# líneas de un compose cambian el puerto publicado, y eso —en Welzy— es el
+# reparto de confianza 8080/8081 entero: por tamaño saldría `trivial low`, que
+# es el tramo al que no lo lee nadie.
+d=$(montar)
+ruta=$(abrir "$d" tramo-compose 2>/dev/null)
+printf 'services:\n  web:\n    ports: ["8080:8080"]\n' > "$ruta/docker-compose.yml"
+git -C "$ruta" add -A; git -C "$ruta" commit -qm "feat: publica el puerto"
+salida=$(clasificar "$d" tramo-compose 2>&1)
+afirmar "un compose pide max aunque sean tres líneas" contiene "sensible max" "$salida"
+afirmar "y dice qué fichero lo ha subido"             contiene "docker-compose.yml" "$salida"
+
 # El tamaño, con el umbral bajado para no escribir seiscientas líneas de mentira.
 d=$(montar)
 ruta=$(abrir "$d" tramo-enorme 2>/dev/null)

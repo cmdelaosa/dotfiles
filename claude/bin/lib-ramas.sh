@@ -302,6 +302,21 @@ orden_de_nivel() {                      # orden_de_nivel <nivel> → 0..4
 # borrando de la lista justo lo que va a tocar. Por lo mismo, el propio fichero
 # está en la lista de serie —cambiarlo es un cambio delicado— y el que decide es
 # `main`, o sea una fusión que ya pasó por aquí.
+#
+# OJO al escribir uno: SUSTITUYE a esta lista, no se suma. Un repositorio que
+# añada sus rutas propias y se olvide de copiar `*auth*` se queda sin `*auth*`.
+#
+# La lista de serie cubre lo delicado en CUALQUIER repositorio: lo que decide
+# quién entra (`*auth*`), lo que se ejecuta solo (hooks, guiones, workflows), lo
+# que cambia datos sin vuelta atrás (migraciones) y —desde el 18-08-2026— lo que
+# decide qué se expone y dónde. Faltaba ese último grupo, y con él faltaba casi
+# todo el escalón: sin `.claude/rutas-sensibles` en NINGÚN repositorio —no lo
+# tenía ninguno—, lo único que llevaba un cambio a `max` era pasar de 600 líneas.
+# Un compose que cambia un puerto publicado son tres líneas, y en Welzy ese
+# puerto es el reparto de confianza entero.
+#
+# Que algo esté en singular y en plural, o en dos idiomas, es a propósito: un
+# patrón que no casa no avisa de que no casa.
 RUTAS_SENSIBLES_DE_SERIE='*hooks/*
 *bin/*.sh
 *migracion*
@@ -310,7 +325,16 @@ RUTAS_SENSIBLES_DE_SERIE='*hooks/*
 .github/workflows/*
 *settings.json
 *rutas-sensibles
-verificar.sh'
+verificar.sh
+*docker-compose*
+*Dockerfile*
+*nginx*
+*systemd*
+*deploy*
+*despliegue*
+*secret*
+*credencial*
+*credential*'
 
 rutas_sensibles() {
   local fichero="$raiz/.claude/rutas-sensibles"

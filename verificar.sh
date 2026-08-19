@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Todo lo que se puede juzgar de un cambio de este repositorio sin salir de la
-# máquina: la sintaxis de cada guión y las dos matrices de pruebas.
+# máquina: la sintaxis de cada guión y las cinco matrices de pruebas.
 #
 # Lo lanza `probar-rama.sh` antes de empujar, así que aquí va lo RÁPIDO. Si algo
 # tarda minutos, su sitio es el CI: un freno que cuesta cinco minutos cada vez
 # acaba con un `--sin-verificar` en cada llamada, y entonces no frena nada.
 #
-# Por eso, desde el 17-08-2026, las tres matrices solo se lanzan si el cambio
+# Por eso, desde el 17-08-2026, las matrices solo se lanzan si el cambio
 # toca lo que prueban —`claude/bin` o `claude/hooks`—, y `--todo` las fuerza. Un
 # cambio de prosa o de settings sale de aquí en un segundo; uno que toca los
 # guiones de rama sigue pagando su minuto, que es justo cuando vale la pena.
@@ -27,9 +27,9 @@ for bandera in "$@"; do
     --todo) todo=1 ;;
     -h | --help)
       printf 'Uso: verificar.sh [--todo]\n\n'
-      printf '  Sin banderas: sintaxis y presupuesto de instrucciones, y las tres\n'
+      printf '  Sin banderas: sintaxis y presupuesto de instrucciones, y las cinco\n'
       printf '  matrices SOLO si el cambio toca claude/bin o claude/hooks.\n'
-      printf '  --todo: lanza las tres matrices pase lo que pase. Es lo que usa el CI.\n'
+      printf '  --todo: lanza las cinco matrices pase lo que pase. Es lo que usa el CI.\n'
       exit 0 ;;
     *) printf 'Opción desconocida: %s\n' "$bandera" >&2; exit 1 ;;
   esac
@@ -130,7 +130,7 @@ presupuesto claude/CLAUDE.md 6000 80
 # se carga justo en el momento más caro, así que también tiene tope, más flojo.
 presupuesto claude/skills/probar/SKILL.md 9000 220
 
-# ── Las tres matrices: a la vez, y solo si tocan ────────────────────────────
+# ── Las cinco matrices: a la vez, y solo si tocan ───────────────────────────
 # Dos cambios del 17-08-2026, y los dos salen de haberlo medido: este guión
 # tardaba 58 s —con `sys 26s`, o sea casi todo arrancando procesos— contra los
 # **32 s que tarda el CI entero** al que pretende ahorrar viajes, y encima corría
@@ -205,7 +205,9 @@ trap 'rm -rf "$salidas"' EXIT
 
 matrices="claude/bin/probar-ramas.sh:matriz de abrir/probar/cerrar-rama.sh
 claude/hooks/probar-git-no-main.sh:matriz del hook git-no-main.sh
-claude/hooks/probar-git-una-sesion.sh:matriz del hook git-una-sesion-por-checkout.sh"
+claude/hooks/probar-git-una-sesion.sh:matriz del hook git-una-sesion-por-checkout.sh
+claude/hooks/probar-verde-falso.sh:matriz del hook verde-falso.sh
+claude/hooks/probar-fuga-en-repo-publico.sh:matriz del hook fuga-en-repo-publico.sh"
 
 n=0
 while IFS= read -r linea; do

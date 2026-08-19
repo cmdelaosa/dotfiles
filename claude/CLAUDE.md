@@ -29,8 +29,8 @@ why behind each rule lives in docs/porques.md; procedure lives in the skills. --
   `~/.claude/bin/cerrar-rama.sh <branch>` from the root after `ExitWorktree` with `keep`.
   Never `gh pr merge --delete-branch`.
 - **Never add a `Co-Authored-By: Claude` trailer.** Write the commit body and stop.
-- Two `PreToolUse` hooks block git on `main` and git in a shared checkout. Their hatches
-  (`CLAUDE_ALLOW_MAIN=1`, `CLAUDE_ALLOW_SHARED_CHECKOUT=1`) are **mine to authorise** — say
+- Four `PreToolUse` hooks block: git on `main`, git in a shared checkout, a piped gate, and
+  a commit that leaks. The four `CLAUDE_ALLOW_*=1` hatches are **mine to authorise** — say
   why and let me decide. Post-merge cleanup (`pull --ff-only`, `push origin --delete`,
   `branch -D`, `worktree remove`) needs no hatch, one command per line, no `&&` chaining.
 - **In the dotfiles repo, run `./claude/bin/…` and `./claude/hooks/…`, not `~/.claude/…`** —

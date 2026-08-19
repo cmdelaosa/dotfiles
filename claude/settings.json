@@ -48,6 +48,14 @@
           {
             "type": "command",
             "command": "/Users/cmo/.claude/hooks/git-una-sesion-por-checkout.sh"
+          },
+          {
+            "type": "command",
+            "command": "/Users/cmo/.claude/hooks/verde-falso.sh"
+          },
+          {
+            "type": "command",
+            "command": "/Users/cmo/.claude/hooks/fuga-en-repo-publico.sh"
           }
         ]
       }
