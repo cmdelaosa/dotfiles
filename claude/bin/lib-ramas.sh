@@ -585,11 +585,15 @@ workflows_que_faltan() {
   # así que empujar la rama deja sobre el mismo SHA una ejecución de `push`. Esa
   # existe y sale verde, y aun así el CI de la PR —el que prueba la FUSIÓN, que
   # es el que puede faltar— puede no haber corrido jamás.
+  # `pull_request_target` tampoco cuenta AQUÍ, y por el mismo motivo por el que no
+  # se exige: corre sobre la base, así que un conflicto no la frena. Un fichero
+  # con los dos disparadores tendría su ejecución de `_target` en verde mientras
+  # la que prueba la fusión no ha existido nunca — el agujero de la PR #35 otra
+  # vez, escondido en un rincón.
   corridos=$($GH api \
     "repos/{owner}/{repo}/actions/runs?head_sha=$sha&per_page=100" \
-    --jq '.workflow_runs[]
-          | select(.event == "pull_request" or .event == "pull_request_target")
-          | .path' 2>/dev/null) || return 1
+    --jq '.workflow_runs[] | select(.event == "pull_request") | .path' 2>/dev/null) ||
+    return 1
 
   comm -23 <(printf '%s\n' "$esperados") <(printf '%s\n' "$corridos" | sort -u)
 }
@@ -675,20 +679,28 @@ esperar_ci() {                          # esperar_ci [--vigilar]
 
   hay_checks() { printf '%s' "$salida" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; }
 
-  faltan=""
   salida=$($GH pr checks "$rama" --json bucket,name,link 2>/dev/null) || true
+
+  # Qué falta se calcula SIEMPRE, también con `hay_workflows` a 0. Hoy lo segundo
+  # implica que no hay nada que exigir —`workflow_de_pr_incondicional` reconoce
+  # menos formas que `hay_ci_de_pr`—, pero son dos analizadores de YAML distintos
+  # y el día que uno se ensanche sin el otro el freno se saltaría solo, en
+  # silencio. Y no cuesta red: sin nada que exigir, `workflows_que_faltan` sale
+  # antes de preguntarle nada a GitHub.
+  faltan=$(workflows_que_faltan) || faltan="?"
+
   # Y no se espera a que exista «alguno», sino a que estén los que la rama
   # exige: el Cloudflare de reel se publica en segundos y Actions tarda más,
   # así que salir en cuanto hay UN check es salir antes de mirar el que vale.
   if [ "$hay_workflows" = 1 ]; then
     espera=0
     while :; do
-      faltan=$(workflows_que_faltan) || faltan="?"
       hay_checks && [ -z "$faltan" ] && break
       [ "$espera" -ge "${ESPERA_CHECKS:-60}" ] && break
       sleep 5
       espera=$((espera + 5))
       salida=$($GH pr checks "$rama" --json bucket,name,link 2>/dev/null) || true
+      faltan=$(workflows_que_faltan) || faltan="?"
     done
   fi
 

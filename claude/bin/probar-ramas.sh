@@ -39,12 +39,26 @@ set -eu
 
 # `gh api`, que es como se pregunta qué workflows han corrido sobre la cabeza de
 # la PR. Contesta ya filtrado por `--jq`, igual que los `pr view --jq` de abajo:
-# una ruta por línea. Quién ha corrido lo dice WORKFLOWS_CORRIDOS —rutas
-# separadas por comas—, y **vacío es un caso**: es la PR #35 de reel, con su
-# check de Cloudflare en verde y su CI sin disparar.
+# una ruta por línea. Quién ha corrido lo dice WORKFLOWS_CORRIDOS —entradas
+# `ruta` o `ruta:evento` separadas por comas, y el evento por defecto es
+# `pull_request`—, y **vacío es un caso**: es la PR #35 de reel, con su check de
+# Cloudflare en verde y su CI sin disparar.
+#
+# El `select` por evento se emula mirando si el nombre del evento aparece en el
+# filtro que se ha pedido. Es lo que hace que el doble pueda contestar de más:
+# sin esto, una ejecución de `push` —o de `pull_request_target`, que corre sobre
+# la base y a la que un conflicto no frena— colaría como CI de la PR y ninguna
+# prueba lo vería.
 if [ "${1:-}" = api ]; then
   printf 'api %s\n' "$*" >> "$ESTADO/gh.log"
-  [ -z "${WORKFLOWS_CORRIDOS:-}" ] || printf '%s' "$WORKFLOWS_CORRIDOS" | tr ',' '\n'
+  filtro=$*
+  for entrada in $(printf '%s' "${WORKFLOWS_CORRIDOS:-}" | tr ',' ' '); do
+    case "$entrada" in
+      *:*) ruta=${entrada%:*}; evento=${entrada##*:} ;;
+      *)   ruta=$entrada;      evento=pull_request ;;
+    esac
+    case "$filtro" in *"\"$evento\""*) printf '%s\n' "$ruta" ;; esac
+  done
   exit 0
 fi
 
@@ -728,6 +742,29 @@ msg=$(cerrar verde "$d" fusion-sin-respuesta 2>&1) || true
 unset WORKFLOWS_CORRIDOS ESTADO_FUSION
 afirmar "sin respuesta, no afirma que no choque" no_contiene "no choca con main" "$msg"
 afirmar "y manda mirarlo a mano"                contiene "gh pr view 1 --json mergeable" "$msg"
+
+# Una ejecución que existe sobre el mismo SHA pero no prueba la FUSIÓN no cuenta.
+# Son dos: la de `push` que deja empujar la rama —`prespuestos-obras` dispara con
+# `on: [push, pull_request]`— y la de `pull_request_target`, que corre sobre la
+# base y a la que un conflicto NO frena. Las dos salen verdes sin haber probado
+# nada de lo que se va a fusionar.
+for evento in push pull_request_target; do
+  d=$(montar); con_workflow "$d"
+  ruta=$(abrir "$d" "corrio-$evento" 2>/dev/null); trabajar "$ruta" uno
+  WORKFLOWS_CORRIDOS=".github/workflows/ci.yml:$evento"
+  msg=$(cerrar verde "$d" "corrio-$evento" 2>&1) && cerrado=0 || cerrado=1
+  unset WORKFLOWS_CORRIDOS
+  afirmar "una ejecución de $evento no cuenta como CI de la PR" test "$cerrado" = 1
+  afirmar "y la rama sigue sin fusionar ($evento)" hay_rama "$d" "corrio-$evento"
+done
+
+# Y la de verdad sí, claro: si el doble contestara que no a todo, los casos de
+# arriba pasarían por el motivo equivocado.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" corrio-de-pr 2>/dev/null); trabajar "$ruta" uno
+WORKFLOWS_CORRIDOS=".github/workflows/ci.yml:pull_request"
+afirmar "una de pull_request sí cuenta, y fusiona" cerrar verde "$d" corrio-de-pr
+unset WORKFLOWS_CORRIDOS
 
 caso "cerrar-rama.sh: un workflow con filtros no se exige"
 # `paths-ignore` hace que «no ha corrido» sea lo esperado y no un aviso. Sin esta
