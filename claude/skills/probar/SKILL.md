@@ -133,8 +133,7 @@ otra vez cuando haya verde.
 ```
 
 **Con `run_in_background`, y no lo sondees**: el harness te despierta cuando el
-proceso termine. Sondear la salida cada pocos segundos es un turno con el
-contexto entero por sondeo, que es lo que hacía cara esta parte.
+proceso termine. Sondearla cada pocos segundos gasta un turno entero por sondeo.
 
 Cómo acaba:
 
@@ -143,13 +142,14 @@ Cómo acaba:
 - **Rojo (sale con 1)** → arréglalo sin preguntar: parche en el worktree,
   commit, **vuelve a clasificar, revisar y marcar** —la marca caducó con ese
   commit— y relanza desde el paso 3. Para eso existe la cadena.
+- **Faltan checks (sale con 1)** → no es rojo: el CI no ha corrido entero, casi
+  siempre porque choca con `main`. Rebasa y relanza desde el paso 3.
 - **Rojo con `PARO:` (sale con 3)** → el guión ha echado el freno: van tres
   rondas, o un check que ya falló ha vuelto a fallar. **No relances.** Enseña los
-  jobs con sus enlaces y para: un bucle contra un flaky o un secreto que falta
-  quema rondas de CI y revisiones sin mover nada.
+  jobs con sus enlaces y para: un bucle contra un flaky quema rondas de CI y
+  revisiones sin mover nada.
 
-El freno lo lleva el guión en un fichero, no tú: no hay que acordarse de nada
-entre rondas.
+El freno lo lleva el guión en un fichero, no tú.
 
 ## El atajo de solo markdown
 
@@ -161,8 +161,8 @@ Tres tiempos, y solo el segundo espera al usuario:
 
 **1.** `~/.claude/bin/probar-rama.sh <rama> --solo-md` (de fondo; en dotfiles,
 `./claude/bin/…`). No hay que escribir `--sin-verificar` ni `--sin-revisar`: el
-guión los rechaza al lado de `--solo-md`, y lo que distingue a esta bandera de
-aquellas dos es que **comprueba el diff antes de perdonar nada**.
+guión los rechaza al lado de `--solo-md`: esta bandera **comprueba el diff antes
+de perdonar nada**.
 
 **2.** Cuando termine, `AskUserQuestion` —*¿la fusiono?*— con la URL delante. Es
 la única pregunta del atajo. Con el CI en rojo no se pregunta: se arregla. «Sin

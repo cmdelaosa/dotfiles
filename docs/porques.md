@@ -121,6 +121,31 @@ mensaje: que el repositorio no tenga CI, o que lo tenga y esta PR no lo dispare
 repositorio no tiene CI» de welzy es falso, y convierte un repositorio con
 pruebas en uno que se fusiona a ojo.
 
+**«Los checks que había han salido verdes» no es «ha pasado todo lo que tenía
+que pasar»** *(24-08-2026)*. En la PR #35 de reel el único check de la cabeza era
+el «Workers Builds» de Cloudflare —verde, publicado al margen de Actions, y sin
+probar una línea de código—: `check` y `edge`, el CI de verdad, no habían corrido
+nunca. `probar-rama.sh --esperar-ci` cantó «CI en verde» y `cerrar-rama.sh`
+fusionó. La causa del silencio es la que nadie deduce solo: un workflow de
+`pull_request` corre sobre `refs/pull/N/merge`, y con la rama en CONFLICTO ese
+commit de fusión no se puede calcular, así que GitHub no programa la ejecución.
+No falla —no existe—, y `gh pr checks` solo enseña lo que otros proveedores
+publican. Cerrar y reabrir la PR no lo arregla; rebasar sí.
+
+Es el mismo fallo que persigue el hook `verde-falso.sh` una capa más arriba: allí
+el verde se pierde en una tubería, aquí se lee de una lista incompleta. Así que
+la respuesta es la misma —lo que no se ha comprobado no es un aprobado—: la lista
+de lo que se exige se lee del disco (`.github/workflows/*.yml`, los que una PR
+dispara **sin filtros**) y se compara con lo que GitHub dice que ha corrido sobre
+la cabeza de la PR. Si falta alguno, no hay verde, y `--solo-md` tampoco lo
+salta. Se compara por RUTA del fichero y no por nombre del check —el nombre es el
+del *job*, y un `name:` a medida o una matriz lo cambian sin tocar el fichero—, y
+filtrando por evento, porque un `on: [push, pull_request]` deja sobre el mismo
+SHA una ejecución de `push` que existe, sale verde, y no ha probado la fusión.
+Los workflows con `paths-ignore` o `branches` no se exigen: ahí «no ha corrido»
+es indistinguible de «no le tocaba», y exigirlos pararía cada PR de documentación
+de welzy.
+
 **Seguir trabajando en una rama revisada dejó de costar releerla entera**
 *(19-08-2026)*. La marca caduca con cada commit, y hasta hoy eso significaba
 volver a leer la rama COMPLETA para juzgar veinte líneas nuevas. Medido en erp

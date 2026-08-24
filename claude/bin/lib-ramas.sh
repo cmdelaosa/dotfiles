@@ -496,9 +496,152 @@ hay_ci_de_pr() {                        # hay_ci_de_pr <directorio>
     "$1"/.github/workflows/*.y*ml 2>/dev/null
 }
 
-# Sale 0 si está verde, 1 si está rojo, 2 si no hay checks. Imprime el porqué.
+# ── Los checks que TENÍAN que estar ─────────────────────────────────────────
+# «Lo que había ha salido verde» NO es «ha pasado todo lo que tenía que pasar»,
+# y hasta el 24-08-2026 estos guiones no sabían distinguirlo. En la PR #35 de
+# reel el único check de la cabeza era el «Workers Builds» de Cloudflare —que se
+# publica al margen de Actions y no prueba nada del código—; `check` y `edge`, el
+# CI de verdad, no habían corrido NUNCA. `probar-rama.sh` cantó «CI en verde» y
+# `cerrar-rama.sh` fusionó.
+#
+# Es el mismo fallo que persigue el hook `verde-falso.sh`, una capa más arriba:
+# allí el verde se pierde en una tubería, aquí se lee de una lista incompleta.
+# La respuesta es la misma — un verde sin comprobar no es un aprobado—, así que
+# la lista de lo que se exige se lee del disco y se compara con lo que GitHub
+# dice que ha corrido.
+
+# ¿Este workflow lo dispara una PR **sin condiciones**? Un `paths-ignore`, un
+# `branches` o un `types` a medida convierten «no ha corrido» en algo que desde
+# fuera no se puede juzgar —welzy deja fuera a propósito las PRs de solo
+# documentación—, así que esos no se exigen. Se exige lo que TIENE que correr
+# siempre, y equivocarse por el lado de exigir de menos deja el mundo como
+# estaba; por el otro, planta un freno en una rama que no lo merece.
+workflow_de_pr_incondicional() {        # workflow_de_pr_incondicional <fichero>
+  awk '
+    # El comentario de una línea no cuenta. No se hila más fino: un `#` entre
+    # comillas dentro de un `on:` no existe, y errar aquí solo relaja.
+    { linea = $0; sub(/[[:space:]]*#.*$/, "", linea); sub(/[[:space:]]+$/, "", linea) }
+    linea == "" { next }
+
+    # Dentro del bloque del `pull_request:`, hasta que la sangría vuelva.
+    en_bloque {
+      match(linea, /^[[:space:]]*/)
+      if (RLENGTH <= sangria) en_bloque = 0
+      else if (linea ~ /^[[:space:]]*(paths|paths-ignore|branches|branches-ignore|types)[[:space:]]*:/) filtrado = 1
+    }
+
+    # `on: [push, pull_request]` y `on: pull_request`: no hay dónde poner un
+    # filtro, así que si aparece, se exige. `pull_request_target` no cuenta: su
+    # ejecución cuelga de la base, no de la cabeza, y aquí se compara contra la
+    # cabeza —exigirlo sería inventarse una ausencia—.
+    linea ~ /^[[:space:]]*on[[:space:]]*:[[:space:]]*\[/ {
+      if (linea ~ /pull_request[^_]/ || linea ~ /pull_request$/) dispara = 1
+      next
+    }
+    linea ~ /^[[:space:]]*on[[:space:]]*:[[:space:]]*pull_request$/ { dispara = 1; next }
+    linea ~ /^[[:space:]]*-[[:space:]]*pull_request$/               { dispara = 1; next }
+
+    # `  pull_request:`, la forma de mapa: la única que admite filtros debajo.
+    linea ~ /^[[:space:]]*pull_request[[:space:]]*:[[:space:]]*$/ {
+      dispara = 1
+      match(linea, /^[[:space:]]*/)
+      sangria = RLENGTH
+      en_bloque = 1
+      next
+    }
+    END { exit ((dispara && !filtrado) ? 0 : 1) }
+  ' "$1" 2>/dev/null
+}
+
+# Las rutas de los workflows que esta rama exige, una por línea.
+workflows_esperados() {                 # workflows_esperados <directorio>
+  local f
+  for f in "$1"/.github/workflows/*.y*ml; do
+    [ -f "$f" ] || continue
+    workflow_de_pr_incondicional "$f" || continue
+    # La ruta tal y como la nombra GitHub, que es como se va a comparar.
+    printf '.github/workflows/%s\n' "${f##*/}"
+  done | sort -u
+}
+
+# Cuáles de esos NO han corrido sobre la cabeza de la PR. Imprime uno por línea;
+# vacío = están todos. **Sale 1 si no ha podido preguntarlo**, que no es lo mismo
+# que «no falta ninguno»: contestar silencio a una pregunta sin respuesta es
+# exactamente el verde falso que esto viene a quitar.
+workflows_que_faltan() {
+  local esperados sha corridos
+  esperados=$(workflows_esperados "${ruta_wt:-$raiz}")
+  [ -n "$esperados" ] || return 0
+
+  sha=$($GH pr view "$rama" --json headRefOid --jq .headRefOid 2>/dev/null) || return 1
+  [ -n "$sha" ] || return 1
+
+  # Se compara por RUTA del fichero, no por nombre del check. El nombre que sale
+  # en `gh pr checks` es el del *job* —`check`, `edge`—, y un `name:` a medida o
+  # una matriz lo cambian sin tocar el fichero; la ruta es la misma que se acaba
+  # de leer del disco.
+  #
+  # Y se filtra por evento: `prespuestos-obras` dispara con `[push, pull_request]`,
+  # así que empujar la rama deja sobre el mismo SHA una ejecución de `push`. Esa
+  # existe y sale verde, y aun así el CI de la PR —el que prueba la FUSIÓN, que
+  # es el que puede faltar— puede no haber corrido jamás.
+  corridos=$($GH api \
+    "repos/{owner}/{repo}/actions/runs?head_sha=$sha&per_page=100" \
+    --jq '.workflow_runs[]
+          | select(.event == "pull_request" or .event == "pull_request_target")
+          | .path' 2>/dev/null) || return 1
+
+  comm -23 <(printf '%s\n' "$esperados") <(printf '%s\n' "$corridos" | sort -u)
+}
+
+# Por qué Actions se ha quedado callado. La causa normal —y la de la PR #35— es
+# que la rama choca con la principal: un workflow de `pull_request` corre sobre
+# `refs/pull/N/merge`, y si GitHub no puede calcular ese commit de fusión, no
+# programa la ejecución. No falla: no existe, y no lo dice en ninguna parte.
+# Cerrar y reabrir la PR no lo arregla; rebasar sí.
+explicar_checks_ausentes() {
+  local fusionable intentos=0
+  # GitHub calcula la fusionabilidad cuando se la preguntan, no antes: la primera
+  # respuesta suele ser `UNKNOWN` y la siguiente ya trae la buena. Sin reintentar,
+  # el caso que más falta hace explicar es justo el que se explicaría mal.
+  while :; do
+    fusionable=$($GH pr view "$rama" --json mergeable,mergeStateStatus \
+                   --jq '"\(.mergeable) \(.mergeStateStatus)"' 2>/dev/null || true)
+    case "$fusionable" in *UNKNOWN*) ;; *) break ;; esac
+    intentos=$((intentos + 1))
+    [ "$intentos" -ge "${INTENTOS_FUSION:-3}" ] && break
+    sleep 2
+  done
+  case "$fusionable" in
+    *CONFLICTING*|*DIRTY*)
+      aviso "" \
+        "La rama CHOCA con $principal, y eso basta para explicarlo: un workflow de" \
+        "\`pull_request\` corre sobre la fusión, y esa fusión no se puede calcular," \
+        "así que Actions no programa nada —no falla, no existe—. Rebasa:" \
+        "" \
+        "    git -C ${ruta_wt:-$raiz} fetch origin" \
+        "    git -C ${ruta_wt:-$raiz} rebase origin/$principal" \
+        "    git -C ${ruta_wt:-$raiz} push --force-with-lease" ;;
+    *UNKNOWN*)
+      aviso "" \
+        "GitHub no dice si la rama choca con $principal —lo calcula cuando se lo" \
+        "preguntan y todavía no ha contestado—. Míralo tú, porque un conflicto es" \
+        "la causa normal de que Actions no programe nada:" \
+        "" \
+        "    gh pr view $numero --json mergeable,mergeStateStatus" ;;
+    *)
+      aviso "" \
+        "La rama no choca con $principal, así que el silencio de Actions es otra" \
+        "cosa: mira si el workflow tiene un filtro que no habías visto, o si su" \
+        "YAML está roto —un fichero que no compila no crea ejecuciones—." ;;
+  esac
+}
+
+# Sale 0 si está verde, 1 si está rojo, 2 si no hay checks, y 4 si FALTA alguno
+# de los que este repositorio exige —que no es lo mismo que 2: ahí no había nada
+# y aquí había algo, solo que no lo que importaba—. Imprime el porqué.
 esperar_ci() {                          # esperar_ci [--vigilar]
-  local vigilar=0 salida hay_workflows espera malos corriendo
+  local vigilar=0 salida hay_workflows espera malos corriendo faltan
   # Global a propósito —lo lee `anotar_rojo`—, y vacía desde ya: hay dos salidas
   # tempranas antes de que se llene, y bajo `set -u` mencionarla sin haberla
   # tocado mataría a quien la lea.
@@ -532,15 +675,45 @@ esperar_ci() {                          # esperar_ci [--vigilar]
 
   hay_checks() { printf '%s' "$salida" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; }
 
+  faltan=""
   salida=$($GH pr checks "$rama" --json bucket,name,link 2>/dev/null) || true
+  # Y no se espera a que exista «alguno», sino a que estén los que la rama
+  # exige: el Cloudflare de reel se publica en segundos y Actions tarda más,
+  # así que salir en cuanto hay UN check es salir antes de mirar el que vale.
   if [ "$hay_workflows" = 1 ]; then
     espera=0
-    while ! hay_checks; do
+    while :; do
+      faltan=$(workflows_que_faltan) || faltan="?"
+      hay_checks && [ -z "$faltan" ] && break
       [ "$espera" -ge "${ESPERA_CHECKS:-60}" ] && break
       sleep 5
       espera=$((espera + 5))
       salida=$($GH pr checks "$rama" --json bucket,name,link 2>/dev/null) || true
     done
+  fi
+
+  # Falta lo que tenía que estar. Va ANTES del «no hay checks» porque el caso
+  # que costó la PR #35 tiene checks de sobra —uno de Cloudflare, verde— y lo que
+  # no tiene es el CI; y va antes que el veredicto porque el veredicto de una
+  # lista incompleta es justo la mentira que se está quitando.
+  if [ -n "$faltan" ]; then
+    if [ "$faltan" = "?" ]; then
+      aviso "" \
+        "No he podido preguntarle a GitHub qué workflows han corrido sobre la" \
+        "cabeza de la PR #$numero. Sin esa respuesta no puedo decir que estén" \
+        "todos, y no decirlo es el punto: lo que no se ha comprobado no es verde."
+    else
+      aviso "" \
+        "La PR #$numero no ha disparado todo su CI. Estos workflows tenían que" \
+        "haber corrido sobre su cabeza y no hay ni rastro de ellos:" ""
+      printf '%s\n' "$faltan" | sed 's/^/    /' >&2
+      aviso "" \
+        "«Lo que había ha salido verde» no es «ha pasado todo lo que tenía que" \
+        "pasar»: un proveedor de despliegue —Cloudflare, Vercel— publica su check" \
+        "al margen de Actions, y su verde no dice nada del código."
+      explicar_checks_ausentes
+    fi
+    return 4
   fi
 
   if ! hay_checks; then
