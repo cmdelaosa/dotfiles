@@ -21,7 +21,10 @@
 #
 # Lo irreversible tiene freno. Con el árbol sucio no fusiona ni borra: enseña los
 # ficheros y para. `--forzar` lo salta y hay que escribirlo a propósito. Sin CI
-# tampoco fusiona: «sin checks» no es un aprobado.
+# tampoco fusiona: «sin checks» no es un aprobado, y desde el 24-08-2026 tampoco
+# lo es «los checks que había han salido verdes» —si el CI que el repositorio
+# exige no ha corrido sobre la cabeza de la PR, esto para, y `--solo-md` no lo
+# salta—.
 set -Eeuo pipefail
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib-ramas.sh"
@@ -45,8 +48,9 @@ while [ $# -gt 0 ]; do
         "                    está fusionada y solo quita pila, worktree y ramas." \
         "  --sin-desplegar   fusiona y limpia, pero no toca producción." \
         "  --solo-md         rama de solo markdown: no despliega, y un «sin" \
-        "                    checks» no le impide fusionar. Se niega si el diff" \
-        "                    toca algo que no acabe en .md." ;;
+        "                    checks» no le impide fusionar —pero un check que" \
+        "                    FALTA sí—. Se niega si el diff toca algo que no" \
+        "                    acabe en .md." ;;
     -*) morir "Opción desconocida: $1" ;;
     *)  [ -z "$rama_arg" ] || morir "Sobra un argumento: $1"; rama_arg="$1" ;;
   esac
@@ -84,6 +88,10 @@ if [ "$solo_limpiar" != 1 ]; then
           # El rojo frena también con `--solo-md`: el atajo dice que la prosa no
           # necesita examen propio, no que se fusione por encima de uno suspendido.
           1) aviso "" "No fusiono nada."; exit 1 ;;
+          # Y falta lo que tenía que correr. Frena igual que el rojo, y también
+          # con `--solo-md`: fusionar aquí es exactamente lo que pasó con la PR
+          # #35 de reel el 24-08-2026 —el único check era el de Cloudflare—.
+          4) aviso "" "No fusiono nada."; exit 1 ;;
           2) if [ "$solo_md" = 1 ]; then
                # Es justo lo que provoca el `paths-ignore` de welzy con una PR de
                # solo documentación, y hasta hoy dejaba la rama abierta esperando

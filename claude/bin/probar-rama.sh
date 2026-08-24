@@ -216,7 +216,9 @@ nota_ci=""
 # dos, una copia se separa de la otra el día que alguien arregla una sola.
 #
 # Códigos de salida, que la skill lee: 1 es un rojo que toca arreglar, y 3 es un
-# rojo con el freno de las rondas echado —ahí no se relanza, se mira—.
+# rojo con el freno de las rondas echado —ahí no se relanza, se mira—. Un CI que
+# no ha corrido entero también sale con 1: hay algo que arreglar en la rama —lo
+# normal, rebasar— y luego se vuelve.
 vigilar_ci() {
   paso "espero al CI de la PR #$numero"
   ci=0; esperar_ci --vigilar || ci=$?
@@ -239,6 +241,15 @@ vigilar_ci() {
        fi
        despedida "El CI no está verde. Arréglalo en la rama y vuelve a lanzarme."
        avisar "El CI no está verde" "$url_pr"
+       exit 1 ;;
+    # Faltan checks que este repositorio exige. Ni es el rojo de arriba —no hay
+    # nada suspendido— ni es el «sin checks» de welzy, que su `paths-ignore`
+    # provoca a propósito: es una PR sobre la que NO ha corrido lo que tenía que
+    # correr, y lo normal es que la rama choque con la principal. Frena también
+    # con `--solo-md`: ese atajo dice que la prosa no necesita examen propio, no
+    # que valga un CI que debería haber corrido y no corrió.
+    4) despedida "Faltan checks que este repositorio exige. Sin ellos no hay verde."
+       avisar "Faltan checks en la PR" "$url_pr"
        exit 1 ;;
     # «Sin checks» es lo que welzy provoca a propósito con su `paths-ignore` en
     # las PRs de documentación. Fuera del atajo eso para la cadena —«sin

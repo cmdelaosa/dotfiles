@@ -36,6 +36,32 @@ mkdir -p "$TMP/bin"
 cat > "$TMP/bin/gh" <<'FALSO'
 #!/bin/bash
 set -eu
+
+# `gh api`, que es como se pregunta qué workflows han corrido sobre la cabeza de
+# la PR. Contesta ya filtrado por `--jq`, igual que los `pr view --jq` de abajo:
+# una ruta por línea. Quién ha corrido lo dice WORKFLOWS_CORRIDOS —entradas
+# `ruta` o `ruta:evento` separadas por comas, y el evento por defecto es
+# `pull_request`—, y **vacío es un caso**: es la PR #35 de reel, con su check de
+# Cloudflare en verde y su CI sin disparar.
+#
+# El `select` por evento se emula mirando si el nombre del evento aparece en el
+# filtro que se ha pedido. Es lo que hace que el doble pueda contestar de más:
+# sin esto, una ejecución de `push` —o de `pull_request_target`, que corre sobre
+# la base y a la que un conflicto no frena— colaría como CI de la PR y ninguna
+# prueba lo vería.
+if [ "${1:-}" = api ]; then
+  printf 'api %s\n' "$*" >> "$ESTADO/gh.log"
+  filtro=$*
+  for entrada in $(printf '%s' "${WORKFLOWS_CORRIDOS:-}" | tr ',' ' '); do
+    case "$entrada" in
+      *:*) ruta=${entrada%:*}; evento=${entrada##*:} ;;
+      *)   ruta=$entrada;      evento=pull_request ;;
+    esac
+    case "$filtro" in *"\"$evento\""*) printf '%s\n' "$ruta" ;; esac
+  done
+  exit 0
+fi
+
 [ "${1:-}" = pr ] || exit 1
 accion=$2
 shift 2
@@ -55,6 +81,23 @@ case $accion in
       *" --jq .url "*)    echo "https://example.test/pr/1" ;;
       *" --jq .state "*)  cat "$ESTADO/pr-$rama" ;;
       *" --jq .number "*) echo 1 ;;
+      # La cabeza de la PR, que es contra lo que se comparan los workflows.
+      *" --jq .headRefOid "*) echo "cabeza-de-$rama" ;;
+      # Si la rama choca con main. Lo dice ESTADO_FUSION, y su valor por defecto
+      # es el normal: una rama que se fusiona limpia. Con el prefijo `LUEGO:`, la
+      # PRIMERA respuesta es `UNKNOWN` y las siguientes ya son la de verdad: es
+      # lo que hace GitHub, que calcula la fusionabilidad cuando se la preguntan.
+      *"mergeable,mergeStateStatus"*)
+        case "${ESTADO_FUSION:-MERGEABLE CLEAN}" in
+          LUEGO:*)
+            if [ -f "$ESTADO/fusion.preguntada" ]; then
+              printf '%s\n' "${ESTADO_FUSION#LUEGO:}"
+            else
+              : > "$ESTADO/fusion.preguntada"
+              echo "UNKNOWN UNKNOWN"
+            fi ;;
+          *) echo "${ESTADO_FUSION:-MERGEABLE CLEAN}" ;;
+        esac ;;
     esac
     ;;
   create)
@@ -355,6 +398,8 @@ cerrar() {
       ESTADO="$d/estado" ESPEJO="$d/espejo" ESCENARIO="$esc" ESPERA_CHECKS=0 \
       DESPLIEGUE_FALLA="${DESPLIEGUE_FALLA:-0}" VOLUMENES="${VOLUMENES:-}" \
       VOLUMEN_ATASCADO="${VOLUMEN_ATASCADO:-0}" PILAS="${PILAS:-}" \
+      WORKFLOWS_CORRIDOS="${WORKFLOWS_CORRIDOS-.github/workflows/ci.yml}" \
+      ESTADO_FUSION="${ESTADO_FUSION:-MERGEABLE CLEAN}" \
       "$bin/cerrar-rama.sh" "$@" )
 }
 
@@ -373,6 +418,10 @@ escribir_workflow() {   # escribir_workflow <fichero> [forma]
     escalar)   printf 'name: CI\non: pull_request\njobs:\n  x:\n    runs-on: ubuntu-latest\n' ;;
     secuencia) printf 'name: CI\non:\n  - push\n  - pull_request\njobs:\n  x:\n    runs-on: ubuntu-latest\n' ;;
     solo-push) printf 'name: CI\non:\n  push:\n    branches: [main]\njobs:\n  x:\n    runs-on: ubuntu-latest\n' ;;
+    # Con filtro: se dispara con PRs, pero no con todas. Es el `paths-ignore` de
+    # welzy, y es lo que separa «no ha corrido porque no le tocaba» de «no ha
+    # corrido y tenía que haber corrido».
+    filtrado)  printf 'name: CI\non:\n  pull_request:\n    paths-ignore:\n      - "**.md"\njobs:\n  x:\n    runs-on: ubuntu-latest\n' ;;
   esac > "$1"
 }
 
@@ -392,6 +441,8 @@ probar_rama() {  # probar_rama <escenario> <dir> [args…]
       PUERTOS_PILLADOS="${PUERTOS_PILLADOS:-0}" \
       LIMITE_TRIVIAL="${LIMITE_TRIVIAL:-30}" LIMITE_GRANDE="${LIMITE_GRANDE:-600}" \
       RONDAS_MAXIMAS="${RONDAS_MAXIMAS:-3}" \
+      WORKFLOWS_CORRIDOS="${WORKFLOWS_CORRIDOS-.github/workflows/ci.yml}" \
+      ESTADO_FUSION="${ESTADO_FUSION:-MERGEABLE CLEAN}" \
       "$bin/probar-rama.sh" "$@" )
 }
 
@@ -633,6 +684,120 @@ msg=$(cerrar sin-checks "$d" trae-el-ci 2>&1)
 afirmar "el workflow que solo está en la rama cuenta" \
         no_contiene "este repositorio no tiene CI" "$msg"
 
+caso "cerrar-rama.sh: los checks que había en verde no son TODOS los checks"
+# La PR #35 de reel, 24-08-2026. El único check de la cabeza era el «Workers
+# Builds» de Cloudflare —verde, publicado al margen de Actions y sin probar una
+# línea de código—; `check` y `edge`, el CI de verdad, no habían corrido nunca.
+# `gh pr checks` enseñaba un verde, y esto fusionó.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" ci-que-no-corrio 2>/dev/null); trabajar "$ruta" uno
+WORKFLOWS_CORRIDOS=""
+msg=$(cerrar verde "$d" ci-que-no-corrio 2>&1) && cerrado=0 || cerrado=1
+unset WORKFLOWS_CORRIDOS
+afirmar "con un check verde pero sin el CI, NO fusiona" test "$cerrado" = 1
+afirmar "y nombra el workflow que falta"  contiene ".github/workflows/ci.yml" "$msg"
+# «Sin checks» es otra cosa —ahí no había nada—, y confundirlos deja al usuario
+# buscando un `paths-ignore` que no existe.
+afirmar "y no lo explica como un «sin checks»" no_contiene "paths-ignore" "$msg"
+afirmar "la rama sigue sin fusionar"      hay_rama "$d" ci-que-no-corrio
+afirmar "y el worktree sigue en pie"      hay_worktree "$d" ci-que-no-corrio
+
+# Por qué Actions se calló. Un workflow de `pull_request` corre sobre la fusión,
+# y con la rama en conflicto esa fusión no se puede calcular: la ejecución no
+# falla, no llega a existir. Nadie deduce eso solo, así que se dice.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" ci-en-conflicto 2>/dev/null); trabajar "$ruta" uno
+WORKFLOWS_CORRIDOS=""; ESTADO_FUSION="CONFLICTING DIRTY"
+msg=$(cerrar verde "$d" ci-en-conflicto 2>&1) || true
+unset WORKFLOWS_CORRIDOS ESTADO_FUSION
+afirmar "dice que la rama choca con main"  contiene "CHOCA con main" "$msg"
+afirmar "y da el rebase como remedio"      contiene "rebase origin/main" "$msg"
+
+# Y al revés: sin conflicto no se inventa uno. Un remedio que no viene a cuento
+# manda a rebasar una rama limpia, que es trabajo y riesgo por nada.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" ci-mudo-y-limpio 2>/dev/null); trabajar "$ruta" uno
+WORKFLOWS_CORRIDOS=""
+msg=$(cerrar verde "$d" ci-mudo-y-limpio 2>&1) || true
+unset WORKFLOWS_CORRIDOS
+negar   "sin conflicto no manda rebasar"   contiene "rebase origin/main" "$msg"
+afirmar "pero sigue sin fusionar"          hay_rama "$d" ci-mudo-y-limpio
+
+# GitHub calcula la fusionabilidad cuando se la preguntan: la primera respuesta
+# es `UNKNOWN` y la segunda ya trae la buena. Sin reintentar, el caso que más
+# falta hace explicar —una rama en conflicto— se explicaría justo al revés.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" fusion-que-tarda 2>/dev/null); trabajar "$ruta" uno
+WORKFLOWS_CORRIDOS=""; ESTADO_FUSION="LUEGO:CONFLICTING DIRTY"
+msg=$(cerrar verde "$d" fusion-que-tarda 2>&1) || true
+unset WORKFLOWS_CORRIDOS ESTADO_FUSION
+afirmar "reintenta y acaba viendo el conflicto" contiene "CHOCA con main" "$msg"
+
+# Y si ni reintentando contesta, se dice que no se sabe y se manda mirarlo. Un
+# «no choca» inventado deja buscando un filtro que no existe.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" fusion-sin-respuesta 2>/dev/null); trabajar "$ruta" uno
+WORKFLOWS_CORRIDOS=""; ESTADO_FUSION="UNKNOWN UNKNOWN"
+msg=$(cerrar verde "$d" fusion-sin-respuesta 2>&1) || true
+unset WORKFLOWS_CORRIDOS ESTADO_FUSION
+afirmar "sin respuesta, no afirma que no choque" no_contiene "no choca con main" "$msg"
+afirmar "y manda mirarlo a mano"                contiene "gh pr view 1 --json mergeable" "$msg"
+
+# Una ejecución que existe sobre el mismo SHA pero no prueba la FUSIÓN no cuenta.
+# Son dos: la de `push` que deja empujar la rama —`prespuestos-obras` dispara con
+# `on: [push, pull_request]`— y la de `pull_request_target`, que corre sobre la
+# base y a la que un conflicto NO frena. Las dos salen verdes sin haber probado
+# nada de lo que se va a fusionar.
+for evento in push pull_request_target; do
+  d=$(montar); con_workflow "$d"
+  ruta=$(abrir "$d" "corrio-$evento" 2>/dev/null); trabajar "$ruta" uno
+  WORKFLOWS_CORRIDOS=".github/workflows/ci.yml:$evento"
+  msg=$(cerrar verde "$d" "corrio-$evento" 2>&1) && cerrado=0 || cerrado=1
+  unset WORKFLOWS_CORRIDOS
+  afirmar "una ejecución de $evento no cuenta como CI de la PR" test "$cerrado" = 1
+  afirmar "y la rama sigue sin fusionar ($evento)" hay_rama "$d" "corrio-$evento"
+done
+
+# Y la de verdad sí, claro: si el doble contestara que no a todo, los casos de
+# arriba pasarían por el motivo equivocado.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" corrio-de-pr 2>/dev/null); trabajar "$ruta" uno
+WORKFLOWS_CORRIDOS=".github/workflows/ci.yml:pull_request"
+afirmar "una de pull_request sí cuenta, y fusiona" cerrar verde "$d" corrio-de-pr
+unset WORKFLOWS_CORRIDOS
+
+caso "cerrar-rama.sh: un workflow con filtros no se exige"
+# `paths-ignore` hace que «no ha corrido» sea lo esperado y no un aviso. Sin esta
+# excepción, cada PR de solo documentación de welzy se quedaría parada para
+# siempre esperando un check que su propio `ci.yml` decide no disparar.
+d=$(montar); con_workflow "$d" filtrado
+ruta=$(abrir "$d" con-filtro 2>/dev/null); trabajar "$ruta" uno
+WORKFLOWS_CORRIDOS=""
+afirmar "con paths-ignore y sin correr, fusiona igual" cerrar verde "$d" con-filtro
+unset WORKFLOWS_CORRIDOS
+
+# Y el «sin checks» de welzy sigue siendo lo que era: un workflow con filtros que
+# no dispara nada. Este es el caso de verdad, con el fichero que welzy tiene.
+d=$(montar); con_workflow "$d" filtrado
+ruta=$(abrir "$d" welzy-de-verdad 2>/dev/null); documentar "$ruta" uno
+WORKFLOWS_CORRIDOS=""
+msg=$(cerrar sin-checks "$d" welzy-de-verdad 2>&1)
+unset WORKFLOWS_CORRIDOS
+afirmar "sigue nombrando el paths-ignore"  contiene "paths-ignore" "$msg"
+afirmar "y no lo llama un check que falta" no_contiene "no ha disparado todo su CI" "$msg"
+
+caso "cerrar-rama.sh --solo-md: un check que FALTA sí le frena"
+# El atajo dice que la prosa no necesita examen propio, no que valga un CI que
+# tenía que haber corrido y no corrió. Con `--solo-md`, «sin checks» pasa; esto
+# no, o el agujero de la PR #35 sobreviviría entero detrás de una bandera.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" md-sin-ci 2>/dev/null); documentar "$ruta" uno
+WORKFLOWS_CORRIDOS=""
+negar   "no fusiona aunque sea solo markdown" cerrar verde "$d" md-sin-ci --solo-md
+unset WORKFLOWS_CORRIDOS
+afirmar "y la rama sigue viva"            hay_rama "$d" md-sin-ci
+afirmar "y el worktree también"           hay_worktree "$d" md-sin-ci
+
 caso "cerrar-rama.sh: verde de punta a punta"
 d=$(montar); ruta=$(abrir "$d" verde 2>/dev/null); trabajar "$ruta" uno
 afirmar "cierra sin error"              cerrar verde "$d" verde
@@ -740,6 +905,30 @@ revisar "$d" sin-checks-por-defecto >/dev/null 2>&1
 msg=$(probar_rama sin-checks "$d" sin-checks-por-defecto 2>&1) && sc=0 || sc=1
 afirmar "sin checks y sin banderas: sale bien"  test "$sc" = 0
 afirmar "y también da la URL de la PR"      contiene "PR:      https://example.test/pr/1" "$msg"
+
+caso "probar-rama.sh: un CI que no ha corrido no es un verde"
+# El primer tiempo del mismo fallo: aquí es donde se cantó «CI en verde» sobre la
+# PR #35, y de esa línea sale todo lo demás —la skill la lee para seguir—.
+d=$(montar); con_workflow "$d"; con_compose "$d"
+ruta=$(abrir "$d" verde-que-no-lo-era 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" verde-que-no-lo-era >/dev/null 2>&1
+WORKFLOWS_CORRIDOS=""
+msg=$(probar_rama verde "$d" verde-que-no-lo-era 2>&1) && sc=0 || sc=$?
+unset WORKFLOWS_CORRIDOS
+afirmar "sale con 1, para volver después de arreglarlo" test "$sc" = 1
+negar   "no canta «CI en verde»"          contiene "CI en verde" "$msg"
+afirmar "nombra el workflow que falta"    contiene ".github/workflows/ci.yml" "$msg"
+afirmar "y sigue dando la URL de la PR"   contiene "PR:      https://example.test/pr/1" "$msg"
+afirmar "y no levanta ninguna pila"       no_contiene "up -d --build" "$(registro "$d" docker.log)"
+
+# Con `--solo-md` tampoco pasa. La bandera perdona el «sin checks» de welzy, no
+# un CI que debería haber corrido.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" md-y-sin-ci 2>/dev/null); documentar "$ruta" uno
+revisar "$d" md-y-sin-ci >/dev/null 2>&1
+WORKFLOWS_CORRIDOS=""
+negar "con --solo-md sigue frenando" probar_rama verde "$d" md-y-sin-ci --solo-md
+unset WORKFLOWS_CORRIDOS
 
 caso "probar-rama.sh: sin verde no levanta nada, aunque se pida"
 d=$(montar); con_workflow "$d"; con_compose "$d"

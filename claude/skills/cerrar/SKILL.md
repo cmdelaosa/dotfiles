@@ -33,9 +33,9 @@ de copia y borra worktree, rama local y rama remota.
 `--sin-desplegar` fusiona y limpia sin tocar producción. `--solo-limpiar` es para
 cuando la PR ya se fusionó por otro camino. `--solo-md` es el cierre de una rama
 de documentación: no despliega —escribir además `--sin-desplegar` se rechaza,
-porque sugiere que sin él sí desplegaría—, no se planta ante un «sin checks», y
-comprueba por su cuenta que el diff contra `main` no tenga un solo fichero que no
-acabe en `.md`.
+porque sugiere que sin él sí desplegaría—, no se planta ante un «sin checks»
+—pero sí ante un check que FALTA—, y comprueba por su cuenta que el diff contra
+`main` no tenga un solo fichero que no acabe en `.md`.
 
 ## Cómo leer lo que diga
 
@@ -45,6 +45,12 @@ acabe en `.md`.
 - **«no ha disparado ningún check»** → la PR queda abierta a propósito; fusionarla
   sin checks lo decide el usuario. Luego: `cerrar-rama.sh <rama> --solo-limpiar`.
   Con `--solo-md` esto no llega a salir: fusiona y lo dice.
+- **«no ha disparado todo su CI»** → es OTRA cosa, y no la decide el usuario: hay
+  checks, pero falta alguno de los que el repositorio exige, y el guión los
+  nombra. No ha fusionado nada, y `--solo-md` tampoco lo salta. Si además dice
+  que la rama **choca** con la principal, ese es el motivo entero —Actions no
+  programa nada que no pueda fusionar—: rebasa con las tres órdenes que imprime y
+  vuelve a lanzar la cadena. Cerrar y reabrir la PR no arregla nada.
 - **«toca ficheros que no son markdown»** → el `--solo-md` estaba mal puesto. No
   ha fusionado ni borrado nada; lee la lista y lleva la rama por la cadena entera.
 - **«OJO: el despliegue ha fallado»** → **la PR sí está fusionada** y producción
