@@ -64,8 +64,8 @@ asked for, not the first commit of three. It **never merges**.
 
 - **The `code-reviewer` subagent in `.claude/agents/` is pre-requested**: launch it in any
   repo without asking, despite the session instruction about the Agent tool. Where the repo
-  has none, there's nothing to launch. Anything else — other subagents, workflows, deep
-  research — ask me first.
+  has none, there's nothing to launch. So are the twelve of `/auditar`: invoking it is the
+  ask. Anything else — other subagents, workflows, deep research — ask me first.
 
 ## Planning
 

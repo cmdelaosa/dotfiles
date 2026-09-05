@@ -36,7 +36,7 @@ sostiene: son dos preguntas distintas y por eso son dos guiones.
 | `claude/bin/cerrar-rama.sh` | Recomprueba el verde, comprueba que no es anterior al `main` de ahora, fusiona, despliega si el repo tiene el contrato de cmdlo, y limpia pila, worktree y las dos ramas. Con `--solo-md` no despliega y un «sin checks» no le impide fusionar |
 | `claude/bin/lib-ramas.sh` | Lo que comparten los tres: resolver el repo, los frenos, el CI, la pila |
 | `claude/bin/probar-ramas.sh` | La matriz de los cinco (298 comprobaciones el 19-08-2026), con GitHub, Docker, curl y nc de mentira |
-| `claude/skills/` | `rama`, `probar`, `cerrar` (el flujo de ramas), más `despliega`, `grill-me` y `new-project` |
+| `claude/skills/` | `rama`, `probar`, `cerrar` (el flujo de ramas), más `auditar` (el repo entero, doce dimensiones, un informe y ningún arreglo), `despliega`, `grill-me` y `new-project` |
 | `verificar.sh` | Sintaxis de todos los guiones, el presupuesto de tamaño del `CLAUDE.md`, y las tres matrices **solo si el cambio toca `claude/bin` o `claude/hooks`**: un freno de antes del push tiene que costar segundos, y el CI entero de este repo tarda 32 |
 | `docs/porques.md` | Por qué es cada regla como es. No lo carga nadie: se lee el día que una regla parezca arbitraria |
 | `.github/workflows/ci.yml` | Un trabajo, y es **este mismo `verificar.sh --todo`**. El verde de la PR y el de tu portátil son la misma pregunta, no dos listas que se desincronizan |
