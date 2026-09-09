@@ -214,8 +214,22 @@ while IFS= read -r f; do
   # Un fichero que por su NOMBRE no debería entrar nunca. Las plantillas van
   # PRIMERO: `.env.example` es lo contrario de una fuga, es la forma de que el
   # secreto no esté.
+  #
+  # **Y `.env.ejemplo` es una plantilla igual que `.env.example`**
+  # *(09-09-2026)*. La lista conocía las cuatro inglesas y ninguna española,
+  # en unos dotfiles cuyos repositorios están escritos enteros en español:
+  # en `erp`, la plantilla que la guía de despliegue manda copiar se llamaba
+  # así, y este hook la trataba como una fuga. Cada vez que se tocara habría
+  # que gastar `CLAUDE_ALLOW_FUGA=1`, que es una escotilla para fugas de
+  # verdad; una que se pide por rutina deja de leerse.
+  #
+  # ⚠️ **Solo `ejemplo`, y no `plantilla` ni ningún otro sinónimo.** Cada
+  # nombre de esta lista es una forma de saltarse la comprobación por
+  # NOMBRE, y lo único que queda detrás es el repaso del contenido. Se
+  # añade el nombre que se usa, no el que podría usarse.
   case "$f" in
-    *.env.example | *.env.sample | *.env.template | *.env.dist) ;;
+    *.env.example | *.env.sample | *.env.template | *.env.dist | \
+    *.env.ejemplo) ;;
     *.pem | *.key | *id_rsa | *id_ed25519 | *.p12 | *.pfx | .env | *.env | \
     .env.* | *.env.* | *credentials.json)
       hallazgos="${hallazgos}  $f
