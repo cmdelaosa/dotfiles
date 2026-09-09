@@ -82,6 +82,18 @@ probar publico PASA "token por variable"        c.sh 'TOKEN=$GITHUB_TOKEN'
 probar publico PASA "contraseña por variable"   c.sh 'password: ${PGPASSWORD}'
 probar publico PASA "un .env.example"           .env.example 'FOO=pon-aqui-lo-tuyo'
 probar publico PASA "un .env.dist"              .env.dist 'FOO=pon-aqui-lo-tuyo'
+# En español, que es como están escritos estos repositorios. Faltaban, y por
+# eso `erp` tuvo que renombrar su plantilla para poder commitearla.
+probar publico PASA "un .env.ejemplo"           .env.ejemplo 'FOO=pon-aqui-lo-tuyo'
+probar publico PASA "un .env.plantilla"         .env.plantilla 'FOO=pon-aqui-lo-tuyo'
+probar publico PASA "un env.ejemplo, sin punto" env.ejemplo 'FOO=pon-aqui-lo-tuyo'
+# Y la plantilla no es una barra libre: el nombre la exime de la lista de
+# nombres, no del repaso del CONTENIDO. Una plantilla con una credencial de
+# verdad dentro es el descuido exacto que este hook existe para cazar.
+probar publico BLOQUEA "una clave DENTRO de la plantilla" \
+       .env.ejemplo 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE'
+# El fichero de verdad sigue bloqueado, que es de lo que va todo esto.
+probar publico BLOQUEA "el .env de verdad"      .env 'POSTGRES_PASSWORD=lo-que-sea'
 probar publico PASA "prosa que habla de tokens" doc.md 'El token se lee de la variable, nunca del fichero.'
 
 echo "--- datos de la máquina: solo pesan en un repositorio PÚBLICO ---"
