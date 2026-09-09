@@ -82,14 +82,28 @@ probar publico PASA "token por variable"        c.sh 'TOKEN=$GITHUB_TOKEN'
 probar publico PASA "contraseña por variable"   c.sh 'password: ${PGPASSWORD}'
 probar publico PASA "un .env.example"           .env.example 'FOO=pon-aqui-lo-tuyo'
 probar publico PASA "un .env.dist"              .env.dist 'FOO=pon-aqui-lo-tuyo'
-# En español, que es como están escritos estos repositorios. Faltaban, y por
+# Las otras dos inglesas, que estaban en la lista y no las miraba nadie: la
+# línea del `case` ocupa dos renglones con continuación y un dedazo puede
+# perder una sin que nada se entere.
+probar publico PASA "un .env.sample"            .env.sample 'FOO=pon-aqui-lo-tuyo'
+probar publico PASA "un .env.template"          .env.template 'FOO=pon-aqui-lo-tuyo'
+# Y en español, que es como están escritos estos repositorios. Faltaba, y por
 # eso `erp` tuvo que renombrar su plantilla para poder commitearla.
 probar publico PASA "un .env.ejemplo"           .env.ejemplo 'FOO=pon-aqui-lo-tuyo'
-probar publico PASA "un .env.plantilla"         .env.plantilla 'FOO=pon-aqui-lo-tuyo'
-probar publico PASA "un env.ejemplo, sin punto" env.ejemplo 'FOO=pon-aqui-lo-tuyo'
+# La exención está anclada al FINAL del nombre. Un `.bak` —el resto típico de
+# editar una plantilla— tiene que seguir cayendo por `*.env.*`; sin este caso,
+# reescribir la lista con `*.env.ejemplo*` dejaría la matriz verde.
+probar publico BLOQUEA "un .env.ejemplo.bak"    .env.ejemplo.bak 'FOO=pon-aqui-lo-tuyo'
 # Y la plantilla no es una barra libre: el nombre la exime de la lista de
-# nombres, no del repaso del CONTENIDO. Una plantilla con una credencial de
+# NOMBRES, no del repaso del contenido. Una plantilla con una credencial de
 # verdad dentro es el descuido exacto que este hook existe para cazar.
+#
+# ⚠️ Esta clave cae por el patrón específico de AWS (`AKIA…`). Que el patrón
+# GENÉRICO —`password|secret|token|api_key` seguido de un valor— funcione
+# dentro de una plantilla no lo prueba este caso, y hoy en el caso normal no
+# funciona: ese patrón no lleva `-i` y las variables de entorno se escriben
+# en MAYÚSCULAS. Es un agujero del hook, anterior a esto y más gordo que
+# esto; cuando se arregle, aquí va su caso.
 probar publico BLOQUEA "una clave DENTRO de la plantilla" \
        .env.ejemplo 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE'
 # El fichero de verdad sigue bloqueado, que es de lo que va todo esto.
