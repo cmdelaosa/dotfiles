@@ -573,7 +573,7 @@ workflows_que_faltan() {
   esperados=$(workflows_esperados "${ruta_wt:-$raiz}")
   [ -n "$esperados" ] || return 0
 
-  sha=$($GH pr view "$rama" --json headRefOid --jq .headRefOid 2>/dev/null) || return 1
+  sha=$(cabeza_de_pr)
   [ -n "$sha" ] || return 1
 
   # Se compara por RUTA del fichero, no por nombre del check. El nombre que sale
@@ -872,25 +872,123 @@ CHECKS
 # cuanto hay varios agentes con una rama cada uno, que es justo para lo que se
 # montó todo esto.
 #
-# Sale 0 si el verde sigue valiendo, y 10 si ha tenido que meter main en la rama:
-# entonces hay un CI nuevo y hay que volver a esperarlo.
+# Y el `update-branch` que lo arregla tiene su propia carrera, medida el
+# 10-09-2026 en erp, PR #157: GitHub creó el merge commit en la rama remota y
+# durante un rato `pr view --json headRefOid` seguía contestando la cabeza
+# vieja, `mergeStateStatus` era `UNKNOWN` y no había ninguna ejecución de la
+# cabeza nueva. Con eso, la vuelta siguiente leía el run VIEJO —verde, anterior
+# a main—, volvía a decir «main se ha movido», volvía a llamar a `update-branch`
+# (que contestaba «already up-to-date») y así cuatro veces en segundos, hasta
+# rendirse con «main se ha movido 4 veces» cuando main no se había movido ni
+# una. Desde entonces:
+#
+#   · después de `update-branch` se ESPERA a que GitHub enseñe una cabeza
+#     distinta de la anterior Y tenga una ejecución de esa cabeza —o, si no hay
+#     workflow que la dispare, a que `mergeStateStatus` deje de ser `UNKNOWN`—,
+#     porque hasta entonces todo lo que se le pregunte a `gh` habla de la vieja;
+#   · «main se ha movido» se decide comparando el SHA de origin/main con el que
+#     se metió en la rama la vuelta anterior, no releyendo la fecha del run. Si
+#     el SHA es el mismo, main no se ha movido: es GitHub enseñando el run
+#     viejo, y eso se dice con esas palabras en vez de contarse como una vuelta.
+#
+# Sale 0 si el verde sigue valiendo, 10 si ha tenido que meter main en la rama
+# —hay un CI nuevo y hay que volver a esperarlo—, y 11 si lo que enseña GitHub
+# no se puede fiar todavía: la cabeza nueva no aparece, o el run sigue siendo el
+# viejo. Con 11 no se fusiona y se pide relanzar.
 epoch_iso() {                           # epoch_iso <2026-08-13T14:47:12Z>
   local t=${1%%.*}
   date -j -u -f '%Y-%m-%dT%H:%M:%S' "${t%Z}" +%s 2>/dev/null ||
     date -u -d "$1" +%s 2>/dev/null || true
 }
 
+cabeza_de_pr() {                        # cabeza_de_pr → imprime el SHA, o nada
+  $GH pr view "$rama" --json headRefOid --jq .headRefOid 2>/dev/null || true
+}
+
+# ¿Tiene GitHub alguna ejecución de Actions sobre este SHA? Sin filtrar por
+# evento a propósito: aquí no se juzga el CI —eso lo hace `workflows_que_faltan`
+# después—, solo se mira si GitHub ya sabe que esa cabeza existe.
+hay_ejecucion_de() {                    # hay_ejecucion_de <sha>
+  local n
+  n=$($GH api "repos/{owner}/{repo}/actions/runs?head_sha=$1&per_page=1" \
+        --jq '.workflow_runs | length' 2>/dev/null) || return 1
+  [ "${n:-0}" -gt 0 ] 2>/dev/null
+}
+
+# Espera a que `gh` deje de hablar de la cabeza anterior. Sale 0 cuando la
+# cabeza es otra Y GitHub tiene una ejecución suya o ya sabe si se puede
+# fusionar; 1 si se cansa. Cuánto espera: INTENTOS_CABEZA × PAUSA_CABEZA, diez
+# minutos por defecto. La matriz pone la pausa a cero.
+esperar_cabeza_nueva() {                # esperar_cabeza_nueva <cabeza-anterior>
+  local anterior=$1 cabeza intentos=0 fusion
+  paso "espero a que GitHub enseñe la cabeza nueva de la PR #$numero"
+  while :; do
+    cabeza=$(cabeza_de_pr)
+    if [ -n "$cabeza" ] && [ "$cabeza" != "$anterior" ]; then
+      if hay_ejecucion_de "$cabeza"; then
+        paso "GitHub ya ve la cabeza nueva ($(printf '%.7s' "$cabeza")) y su ejecución"
+        return 0
+      fi
+      fusion=$($GH pr view "$rama" --json mergeable,mergeStateStatus \
+                 --jq .mergeStateStatus 2>/dev/null || true)
+      case "$fusion" in
+        "" | *UNKNOWN*) ;;
+        *) paso "GitHub ya ve la cabeza nueva ($(printf '%.7s' "$cabeza")), sin ejecución que esperar"
+           return 0 ;;
+      esac
+    fi
+    intentos=$((intentos + 1))
+    [ "$intentos" -lt "${INTENTOS_CABEZA:-60}" ] || break
+    sleep "${PAUSA_CABEZA:-10}"
+  done
+  aviso "" \
+    "He metido $principal en la rama, pero GitHub sigue enseñando la cabeza" \
+    "anterior de la PR #$numero ($(printf '%.7s' "$anterior")) o no tiene" \
+    "ninguna ejecución de la nueva. Todo lo que le pregunte ahora hablaría del" \
+    "CI viejo, y ese verde probó otra fusión."
+  return 1
+}
+
 asegurar_ci_fresco() {
-  local ultimo main_epoch check_epoch
+  local ultimo main_sha main_epoch check_epoch cabeza
+  git -C "$raiz" fetch origin --quiet
+  main_sha=$(git -C "$raiz" rev-parse --verify --quiet "origin/$principal" 2>/dev/null || true)
+  cabeza=$(cabeza_de_pr)
+  # Si `gh` no contesta, la cabeza de antes del `update-branch` es la que acaba
+  # de traer el `fetch`: sin ella, «una cabeza distinta de la anterior» sería
+  # cualquiera, también la vieja que GitHub sigue enseñando.
+  [ -n "$cabeza" ] || cabeza=$(git -C "$raiz" rev-parse --verify --quiet "origin/$rama" 2>/dev/null || true)
+
+  # Si main ya está dentro de la cabeza de la PR, el CI de esa cabeza probó
+  # exactamente este main: fresco, y sin mirar ninguna fecha. Es lo que cierra
+  # el bucle tras un `update-branch` con main quieto. El `fetch` de arriba trae
+  # la rama remota, así que el SHA está en local; si no estuviera, se pasa a
+  # las fechas en vez de suponer nada.
+  if [ -n "$main_sha" ] && [ -n "$cabeza" ] &&
+     git -C "$raiz" cat-file -e "$cabeza^{commit}" 2>/dev/null &&
+     git -C "$raiz" merge-base --is-ancestor "$main_sha" "$cabeza" 2>/dev/null; then
+    return 0
+  fi
+
   ultimo=$($GH pr checks "$rama" --json completedAt --jq '[.[].completedAt] | max' 2>/dev/null || true)
   [ -n "$ultimo" ] && [ "$ultimo" != null ] || return 0
 
-  git -C "$raiz" fetch origin --quiet
   main_epoch=$(git -C "$raiz" log -1 --format=%ct "origin/$principal" 2>/dev/null || true)
   check_epoch=$(epoch_iso "$ultimo")
   # Sin poder comparar no se inventa una respuesta: se deja pasar el verde que hay.
   [ -n "$main_epoch" ] && [ -n "$check_epoch" ] || return 0
   [ "$main_epoch" -gt "$check_epoch" ] || return 0
+
+  # El verde es anterior a main. ¿Porque main se ha movido, o porque GitHub
+  # sigue enseñando el run de antes del `update-branch`? Lo dice el SHA: si es
+  # el mismo main que ya se metió en la rama, no se ha movido nadie.
+  if [ -n "$main_sha" ] && [ "$main_sha" = "${main_metido:-}" ]; then
+    aviso "" \
+      "El CI que enseña GitHub es anterior a origin/$principal, pero $principal no se" \
+      "ha movido desde que lo metí en la rama: sigue enseñando el run viejo, no" \
+      "uno de la cabeza nueva."
+    return 11
+  fi
 
   aviso "" \
     "origin/$principal se ha movido desde que el CI de esta PR pasó:" \
@@ -901,6 +999,8 @@ asegurar_ci_fresco() {
   # origin/main?»— diría que no y se negaría a limpiar.
   $GH pr update-branch "$numero" >&2 ||
     morir "" "No he podido meter $principal en la rama (¿conflicto?). No fusiono nada."
+  main_metido=$main_sha
+  esperar_cabeza_nueva "$cabeza" || return 11
   return 10
 }
 

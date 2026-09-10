@@ -116,25 +116,32 @@ if [ "$solo_limpiar" != 1 ]; then
       # escenario para el que se montó todo esto. Hasta el 13-08-2026 era un
       # solo tiro, y la segunda espera se fusionaba a ciegas.
       #
-      # El tope existe porque preguntar en bucle también tapa una carrera que
-      # aquí no se puede cerrar: justo después del `update-branch`, GitHub puede
-      # tardar en listar la ejecución nueva y `--watch` sale al instante sobre la
-      # vieja. Si eso pasa, la vuelta siguiente vuelve a ver un verde caducado y
-      # se vuelve a esperar. Si ni así converge, lo que toca es decirlo y no
-      # fusionar: un `main` que no para quieto es una decisión de Carlos, no del
-      # guión.
+      # Cada vuelta es un main DISTINTO: `asegurar_ci_fresco` compara el SHA de
+      # origin/main con el que metió la vuelta anterior, y si es el mismo no
+      # devuelve 10 sino 11 —GitHub enseñando todavía el run viejo, que es la
+      # carrera del 10-09-2026 en erp: cuatro vueltas en segundos con main
+      # quieto, y un «main se ha movido 4 veces» que era mentira—. Con 11 no
+      # hay nada que reintentar aquí: se dice y se para. Y el tope de vueltas
+      # de verdad sigue existiendo: un `main` que no para quieto es una
+      # decisión de Carlos, no del guión.
       vueltas=0
       while :; do
         fresco=0; asegurar_ci_fresco || fresco=$?
-        [ "$fresco" = 10 ] || break
-        vueltas=$((vueltas + 1))
-        if [ "$vueltas" -gt "${VUELTAS_CI:-3}" ]; then
-          morir "" \
-            "$principal se ha movido $vueltas veces mientras esperaba a su CI." \
-            "No fusiono con un verde que probó otra fusión. No he borrado nada:" \
-            "vuelve a lanzarme cuando $principal se esté quieto."
-        fi
-        juzgar_ci
+        case "$fresco" in
+          0)  break ;;
+          10) vueltas=$((vueltas + 1))
+              if [ "$vueltas" -gt "${VUELTAS_CI:-3}" ]; then
+                morir "" \
+                  "$principal se ha movido $vueltas veces mientras esperaba a su CI." \
+                  "No fusiono con un verde que probó otra fusión. No he borrado nada:" \
+                  "vuelve a lanzarme cuando $principal se esté quieto."
+              fi
+              juzgar_ci ;;
+          *)  morir "" \
+                "No fusiono con un verde que no sé de qué cabeza es. No he borrado nada:" \
+                "vuelve a lanzarme dentro de unos minutos, cuando GitHub se haya" \
+                "enterado de su propio merge." ;;
+        esac
       done
 
       # «Verde» solo si alguien ha visto uno. Con `--solo-md` aquí se llega
