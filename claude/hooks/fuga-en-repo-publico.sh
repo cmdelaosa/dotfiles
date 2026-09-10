@@ -153,6 +153,11 @@ sk-(ant-)?[A-Za-z0-9_-]{20,}'
 # de 18 letras cabe entero en «valor opaco». Con solo `-i` y las inglesas,
 # las coincidencias nuevas en los dos repos son CERO. Un candado que marca
 # el código normal se acaba apagando, y entonces no protege nada.
+#
+# La medida es de un día y se rehace en un minuto: pon el patrón en un
+# fichero y `grep -rEIni -f <ese fichero>` sobre cada repositorio, con y sin
+# las palabras españolas dentro. Si algún día las cuentas cambian, la
+# decisión se vuelve a tomar con números, no de memoria.
 CREDENCIALES_SIN_CAJA='(password|passwd|secret|token|api[_-]?key|apikey)["'\'' ]*[:=][:=]?["'\'' ]*[A-Za-z0-9/+=_-]{16,}'
 
 # ── Listón 2: contexto de la máquina. Solo si el repositorio es público ─────
@@ -235,6 +240,29 @@ apuntar() {          # apuntar <fichero> <clase> <línea>
 "
 }
 
+# buscar <fichero> <lista de patrones> <clase> [banderas de grep…]
+#
+# **Escrito UNA vez** *(10-09-2026)*. Eran tres copias del mismo `while read`
+# —los dos listones de credenciales y el de la máquina—, seis líneas cada una
+# y solo se diferenciaban en la lista, el texto del aviso y, desde hoy, el
+# `-i`. Tres copias en el fichero que decide si un secreto entra en un
+# repositorio es cómo se llega a cambiar el recorrido en dos y olvidar la
+# tercera; y un bucle que deja de marcar no se distingue de uno que va bien.
+#
+# Lee `$anadidas` del ámbito de quien llama, que es lo que se está mirando.
+buscar() {
+  local fichero="$1" lista="$2" clase="$3"
+  shift 3
+  local patron linea
+  while IFS= read -r patron; do
+    [ -z "$patron" ] && continue
+    linea=$(printf '%s\n' "$anadidas" | grep -E "$@" -m1 -e "$patron" 2>/dev/null)
+    [ -n "$linea" ] && apuntar "$fichero" "$clase" "$linea"
+  done <<PATRONES
+$lista
+PATRONES
+}
+
 # Línea a línea, y no `for f in $ficheros`: la lista se parte por espacios, así
 # que un fichero llamado «mi fichero.txt» se leía como dos que no existen y su
 # contenido no lo miraba nadie. Medido: una clave de AWS dentro de ese nombre
@@ -271,31 +299,11 @@ while IFS= read -r f; do
   anadidas=$(git -C "$destino" diff $rango -U0 -- "$f" 2>/dev/null | grep -E '^\+[^+]' | sed 's/^+//')
   [ -z "$anadidas" ] && continue
 
-  while IFS= read -r patron; do
-    [ -z "$patron" ] && continue
-    linea=$(printf '%s\n' "$anadidas" | grep -E -m1 -e "$patron" 2>/dev/null)
-    [ -n "$linea" ] && apuntar "$f" "parece una credencial" "$linea"
-  done <<PATRONES
-$CREDENCIALES
-PATRONES
-
-  # El mismo bucle, con `-i`. Ver por qué son dos listas allá arriba.
-  while IFS= read -r patron; do
-    [ -z "$patron" ] && continue
-    linea=$(printf '%s\n' "$anadidas" | grep -E -i -m1 -e "$patron" 2>/dev/null)
-    [ -n "$linea" ] && apuntar "$f" "parece una credencial" "$linea"
-  done <<PATRONES
-$CREDENCIALES_SIN_CAJA
-PATRONES
+  buscar "$f" "$CREDENCIALES"          "parece una credencial (formato)"
+  buscar "$f" "$CREDENCIALES_SIN_CAJA" "parece una credencial (palabra y valor)" -i
 
   [ "$publico" = si ] || continue
-  while IFS= read -r patron; do
-    [ -z "$patron" ] && continue
-    linea=$(printf '%s\n' "$anadidas" | grep -E -m1 -e "$patron" 2>/dev/null)
-    [ -n "$linea" ] && apuntar "$f" "dato de la máquina, y este repo es PÚBLICO" "$linea"
-  done <<PATRONES
-$MAQUINA
-PATRONES
+  buscar "$f" "$MAQUINA" "dato de la máquina, y este repo es PÚBLICO"
 done <<FICHEROS
 $ficheros
 FICHEROS

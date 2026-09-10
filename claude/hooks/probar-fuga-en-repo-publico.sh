@@ -73,6 +73,11 @@ probar publico BLOQUEA "identidad de age"       c.txt 'AGE-SECRET-KEY-1QQPQZRFQ7
 probar publico BLOQUEA "contraseña con valor de verdad" c.txt 'password: "s3cr3t0LargoDeVerdad123"'
 # En MAYÚSCULAS, que es como se escriben las variables de entorno de verdad —
 # y era el caso que se escapaba entero hasta el 10-09-2026.
+#
+# ⚠️ **Añadir un caso de credencial aquí dispara el hook sobre ESTE fichero**,
+# y es correcto: no sabe distinguir un fixture de un secreto, ni debe. Mira lo
+# que has escrito, comprueba que es de mentira, y pasa con `CLAUDE_ALLOW_FUGA=1`
+# — que es justo lo que esa escotilla existe para cubrir.
 probar publico BLOQUEA "PASSWORD en un .env"    e.sh 'PASSWORD=abcdefghijklmnop1234'
 probar publico BLOQUEA "API_KEY en un compose"  c.yml '      API_KEY: aBcDeF0123456789xyz'
 probar publico BLOQUEA "SECRET en una unidad"   u.service 'Environment=SECRET=abcdefghijklmnop1234'
@@ -98,6 +103,13 @@ probar publico PASA "API_KEY por variable"      c.yml '      API_KEY: ${OPENAI_A
 # que tendría una credencial si se metieran las palabras españolas.
 probar publico PASA "código con «clave»"        t.ts 'const clave = base32Descodificar(secreto);'
 probar publico PASA "un secreto TOTP de test"   t.ts 'totpSecreto: "JBSWY3DPEHPK3PXP",'
+# ⚠️ **Y éste es el precio de esa decisión, escrito para que se vea.** Es la
+# frase con la que se cifran las copias de una instancia de `erp` — un secreto
+# de los buenos— y PASA, porque `frase` no está en la lista. No es un
+# descuido: meter las palabras españolas costaba 28 falsos positivos medidos.
+# Lo que sí lo caza es el nombre del fichero, porque esto vive en un `.env`.
+probar publico PASA "COPIA_FRASE, y pasa a propósito" \
+       c.sh 'COPIA_FRASE=Xk9wQ2vRt7YpLm3nBs5HjD8fGc1AzE4uNi6oPr0TyWqVbXk9wQ2v'
 probar publico PASA "un .env.example"           .env.example 'FOO=pon-aqui-lo-tuyo'
 probar publico PASA "un .env.dist"              .env.dist 'FOO=pon-aqui-lo-tuyo'
 # Las otras dos inglesas, que estaban en la lista y no las miraba nadie: la
