@@ -107,10 +107,14 @@ while IFS= read -r linea; do
     printf '  ok      %s\n' "$fichero"
   else
     printf '  FALLO   %s está a %s en git, y se instala con un enlace: arréglalo con\n' "$fichero" "$modo"
-    printf '          git update-index --chmod=+x %s\n' "$fichero"
+    printf '          git update-index --chmod=+x %s   ...y COMMITEA el cambio\n' "$fichero"
     fallos=$((fallos + 1))
   fi
-done < <(git -C "$repo" ls-files -s -- 'claude/bin/*.sh' 'claude/hooks/*.sh' 2>/dev/null |
+# **Todos los `.sh` del repositorio, no solo los de `claude/`**: `instalar.sh`,
+# `verificar.sh` y `comprobar.sh` viven en la raíz y se invocan como
+# `./instalar.sh`, así que les vale el mismo razonamiento entero. Dejarlos
+# fuera era dejar sin red justo al que monta la instalación desde cero.
+done < <(git -C "$repo" ls-files -s -- '*.sh' 2>/dev/null |
            awk '{ print $1, substr($0, index($0, $4)) }' | sort -k2)
 
 # El mismo cero que arriba, y por lo mismo: sin repositorio git —o con las rutas
