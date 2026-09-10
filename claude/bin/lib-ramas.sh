@@ -451,12 +451,61 @@ hay_algo_que_empujar() {
     morir "La rama '$rama' no tiene ningún commit que origin/$principal no tenga."
 }
 
+# El push. Si `origin/<rama>` es antepasada de la rama, es un fast-forward y va
+# como siempre. Si no, la rama se ha reescrito, y hay que saber por quién:
+#
+# - Si el SHA que hay en origin ha sido alguna vez la cabeza de ESTA rama —está
+#   en su reflog—, lo remoto es lo que este checkout empujó y lo local es su
+#   reescritura: un rebase sobre main, un amend. Se fuerza **con candado sobre
+#   ese SHA**, para que un push de otro sitio entre medias no se pise.
+# - Si no ha sido nunca cabeza de aquí, lo empujó otra sesión, y no se pisa.
+#
+# Pasó el 10-09-2026 en erp, PR #163: la PR chocaba con main, `--esperar-ci`
+# mandó rebasar —el consejo es de este mismo fichero—, y el `--sin-ci`
+# siguiente moría en el push con un «non-fast-forward» después de haber pagado
+# el `verificar.sh` entero. Un rebase que el guión aconseja tiene que poder
+# empujarse desde el guión.
+empujar_rama() {
+  local remota
+  remota=$(git -C "$raiz" rev-parse --quiet --verify "refs/remotes/origin/$rama" || true)
+  if [ -z "$remota" ] || git -C "$raiz" merge-base --is-ancestor "$remota" "$rama"; then
+    git -C "$raiz" push --quiet -u origin "$rama"
+    return
+  fi
+  # El `--` porque una rama que se llame como un fichero de la raíz —`docs`,
+  # `infra`— es «ambigua» para git y el reflog saldría vacío.
+  case "$(git -C "$raiz" reflog show --format=%H "$rama" -- 2>/dev/null)" in
+    *"$remota"*)
+      # Una reescritura deja algo nuevo que empujar. Si no hay nada —la rama
+      # local se ha quedado DETRÁS de lo que ya empujó: un `reset --hard` de
+      # más—, forzar sería borrar commits de la PR sin que nadie lo pida.
+      [ "$(git -C "$raiz" rev-list --count "$remota..$rama")" -gt 0 ] ||
+        morir "La rama está detrás de origin/$rama: aquí no hay nada que origin no tenga." \
+              "Eso no es un rebase, es haber perdido commits —¿un reset de más?—, y no" \
+              "se empuja. Míralo:" \
+              "" \
+              "    git -C ${ruta_wt:-$raiz} log --oneline $rama..origin/$rama"
+      paso "la rama se reescribió aquí (rebase o amend): la fuerzo con candado sobre ${remota:0:7}"
+      git -C "$raiz" push --quiet -u --force-with-lease="$rama:$remota" origin "$rama" ;;
+    *)
+      # O lo empujó otra sesión, o fue el propio `--esperar-ci`: su
+      # `update-branch` mete main en la rama EN GITHUB, y ese merge no ha pasado
+      # nunca por aquí. Traerlo con `pull --rebase` deja lo local encima, y
+      # reescribe los SHA, así que la marca de revisión caduca.
+      morir "origin/$rama tiene commits que esta rama no ha tenido nunca (${remota:0:7}):" \
+            "los empujó otra sesión, o el update-branch de --esperar-ci. No se pisan." \
+            "Tráelos, vuelve a revisar y a marcar, y relánzalo:" \
+            "" \
+            "    git -C ${ruta_wt:-$raiz} pull --rebase origin $rama" ;;
+  esac
+}
+
 # Empuja y deja `numero` y `estado` puestos. Abre la PR si no la había.
 empujar_y_abrir_pr() {
   hay_algo_que_empujar
 
   paso "empujo $rama ($pendientes commit(s))"
-  git -C "$raiz" push --quiet -u origin "$rama"
+  empujar_rama
 
   if $GH pr view "$rama" --json number >/dev/null 2>&1; then
     estado=$($GH pr view "$rama" --json state --jq .state)
@@ -625,7 +674,9 @@ explicar_checks_ausentes() {
         "" \
         "    git -C ${ruta_wt:-$raiz} fetch origin" \
         "    git -C ${ruta_wt:-$raiz} rebase origin/$principal" \
-        "    git -C ${ruta_wt:-$raiz} push --force-with-lease" ;;
+        "" \
+        "y relanza \`probar-rama.sh $rama --sin-ci\` tras volver a revisar y marcar:" \
+        "el push de la rama rebasada lo hace él, con candado." ;;
     *UNKNOWN*)
       aviso "" \
         "GitHub no dice si la rama choca con $principal —lo calcula cuando se lo" \

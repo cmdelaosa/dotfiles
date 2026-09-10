@@ -1818,6 +1818,66 @@ ruta=$(abrir "$d" esperar-contradictorio 2>/dev/null); retocar "$ruta" dos
 negar "--esperar-ci con --con-pila se rechaza"  probar_rama verde "$d" esperar-contradictorio --esperar-ci --con-pila
 negar "--esperar-ci con --sin-ci se rechaza"    probar_rama verde "$d" esperar-contradictorio --esperar-ci --sin-ci
 
+caso "probar-rama.sh: una rama rebasada se vuelve a empujar"
+# Pasó el 10-09-2026 en erp, PR #163: la PR chocaba con main, `--esperar-ci`
+# mandó rebasar —el consejo lo da el propio guión—, y el `--sin-ci` siguiente
+# moría en el push con un «non-fast-forward» después de pagar el verificar.sh
+# entero. El rebase que el guión aconseja tiene que poder empujarse con él.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" rebasada 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" rebasada >/dev/null 2>&1
+probar_rama verde "$d" rebasada --sin-ci >/dev/null 2>&1
+# Otra PR entra en main mientras tanto, y la rama se rebasa sobre ella.
+mover_main "$d"
+git -C "$ruta" fetch -q origin
+git -C "$ruta" rebase -q origin/main
+revisar "$d" rebasada >/dev/null 2>&1
+msg=$(probar_rama verde "$d" rebasada --sin-ci 2>&1) && empujada=0 || empujada=1
+afirmar "tras el rebase, el push pasa"            test "$empujada" = 0
+afirmar "y dice que fuerza con candado"           contiene "candado" "$msg"
+afirmar "y la remota es la cabeza rebasada" \
+        test "$(git -C "$d/repo" ls-remote -q origin refs/heads/rebasada | cut -f1)" \
+           = "$(git -C "$ruta" rev-parse HEAD)"
+
+# Y al revés: un commit que otra sesión empujó a la misma rama no se pisa. Aquí
+# se reescribe en local (un amend) mientras la remota lleva algo que esta rama
+# no ha tenido nunca, y el candado tiene que decir que no.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" pisada 2>/dev/null); trabajar "$ruta" uno
+revisar "$d" pisada >/dev/null 2>&1
+probar_rama verde "$d" pisada --sin-ci >/dev/null 2>&1
+git -C "$d/espejo" fetch -q origin
+git -C "$d/espejo" checkout -q -B pisada origin/pisada
+printf 'de otra sesión\n' > "$d/espejo/ajeno.txt"
+git -C "$d/espejo" add -A
+git -C "$d/espejo" commit -qm "feat: lo empujó otra sesión"
+git -C "$d/espejo" push -q origin pisada
+ajeno=$(git -C "$d/espejo" rev-parse HEAD)
+git -C "$ruta" commit -q --amend -m "feat: uno, reescrito aquí"
+revisar "$d" pisada >/dev/null 2>&1
+msg=$(probar_rama verde "$d" pisada --sin-ci 2>&1) && pisado=0 || pisado=1
+afirmar "con commits ajenos en la remota, se para"   test "$pisado" = 1
+afirmar "y dice que los empujó otra sesión"          contiene "otra sesión" "$msg"
+afirmar "y la remota conserva el commit ajeno" \
+        test "$(git -C "$d/repo" ls-remote -q origin refs/heads/pisada | cut -f1)" = "$ajeno"
+
+# Y una rama que se ha quedado DETRÁS de lo que empujó —un `reset --hard` de
+# más— no es un rebase: el SHA remoto sigue en su reflog, así que el candado
+# solo lo pararía si mirase que hay algo nuevo que empujar. Forzar ahí borra
+# commits de la PR sin que nadie lo haya pedido.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" detras 2>/dev/null); trabajar "$ruta" uno; trabajar "$ruta" dos
+revisar "$d" detras >/dev/null 2>&1
+probar_rama verde "$d" detras --sin-ci >/dev/null 2>&1
+empujado=$(git -C "$ruta" rev-parse HEAD)
+git -C "$ruta" reset -q --hard HEAD~1
+revisar "$d" detras >/dev/null 2>&1
+msg=$(probar_rama verde "$d" detras --sin-ci 2>&1) && retrocedida=0 || retrocedida=1
+afirmar "con la rama detrás de la remota, se para"   test "$retrocedida" = 1
+afirmar "y dice que ha perdido commits"              contiene "perdido commits" "$msg"
+afirmar "y la remota conserva lo empujado" \
+        test "$(git -C "$d/repo" ls-remote -q origin refs/heads/detras | cut -f1)" = "$empujado"
+
 caso "probar-rama.sh: el freno de las rondas contra un rojo que no se va"
 # Vivía en la cabeza del modelo —«apunta los nombres de cada ronda y compáralos
 # contra todas las anteriores»—, que es lo que un modelo hace mal y un fichero
