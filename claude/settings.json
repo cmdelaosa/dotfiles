@@ -35,7 +35,7 @@
     ],
     "defaultMode": "auto"
   },
-  "model": "opus",
+  "model": "opus[1m]",
   "hooks": {
     "PreToolUse": [
       {
@@ -105,6 +105,19 @@
   "skipWorkflowUsageWarning": true,
   "skipAutoPermissionPrompt": true,
   "autoMode": {
+    "allow": [
+      "$defaults",
+      "Bash(pnpm verify:*) and Bash(pnpm build:*), Bash(pnpm test:*), Bash(pnpm tests:contar:*) in /Users/cmo/Projects/erp — the repo's mandatory local gate",
+      "Bash(docker compose -f infra/docker-compose.yml up -d:*) and the matching `down`/`ps`/`logs` for the local norte and faro dev services in /Users/cmo/Projects/erp",
+      "Bash(lsof -i:*) for inspecting the local dev ports 3001, 3002, 5181, 5182, 5433, 5434",
+      "Bash(gh pr create:*) and Bash(gh pr view:*) against github.com/cmdelaosa/erp"
+    ],
+    "soft_deny": [
+      "$defaults",
+      "Bash(docker compose -f infra/docker-compose.yml down -v:*) — removing the local Postgres volumes destroys the Norte/Faro dev databases",
+      "Any write or edit to already-applied SQL files under packages/db/migraciones/** in /Users/cmo/Projects/erp — a migration that has been applied is superseded, never modified",
+      "Any command setting CLAUDE_ALLOW_MAIN=1 or CLAUDE_ALLOW_SHARED_CHECKOUT=1 — these hook escape hatches are the owner's to authorise, not the agent's"
+    ],
     "environment": [
       "### Org-wide",
       "**Organization**: cmdelaosa (personal GitHub account; single-owner projects)",
@@ -130,19 +143,9 @@
       "**Trusted repo**: /Users/cmo/Projects/erp and its configured remote github.com/cmdelaosa/erp (private). Confidential material is fine in this private repo; secrets and sensitive data are never cleared into any repo by its visibility.",
       "**Org-specific CLIs**: pnpm (via corepack) with repo scripts `pnpm verify`, `pnpm build`, `pnpm test`, `pnpm tests:contar`, `pnpm dev`; `gh` for pull requests; `docker compose -f infra/docker-compose.yml` for the local Postgres stack",
       "**Routine under this repo's prefix**: work happens on a named feature branch and its worktree inside /Users/cmo/Projects/erp; post-merge cleanup (`git pull --ff-only`, `git push origin --delete <branch>`, `git branch -D <branch>`, `git worktree remove <path>`) runs as separate single commands"
-    ],
-    "allow": [
-      "$defaults",
-      "Bash(pnpm verify:*) and Bash(pnpm build:*), Bash(pnpm test:*), Bash(pnpm tests:contar:*) in /Users/cmo/Projects/erp — the repo's mandatory local gate",
-      "Bash(docker compose -f infra/docker-compose.yml up -d:*) and the matching `down`/`ps`/`logs` for the local norte and faro dev services in /Users/cmo/Projects/erp",
-      "Bash(lsof -i:*) for inspecting the local dev ports 3001, 3002, 5181, 5182, 5433, 5434",
-      "Bash(gh pr create:*) and Bash(gh pr view:*) against github.com/cmdelaosa/erp"
-    ],
-    "soft_deny": [
-      "$defaults",
-      "Bash(docker compose -f infra/docker-compose.yml down -v:*) — removing the local Postgres volumes destroys the Norte/Faro dev databases",
-      "Any write or edit to already-applied SQL files under packages/db/migraciones/** in /Users/cmo/Projects/erp — a migration that has been applied is superseded, never modified",
-      "Any command setting CLAUDE_ALLOW_MAIN=1 or CLAUDE_ALLOW_SHARED_CHECKOUT=1 — these hook escape hatches are the owner's to authorise, not the agent's"
     ]
+  },
+  "skillOverrides": {
+    "new-project": "off"
   }
 }
