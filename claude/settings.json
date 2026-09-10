@@ -110,7 +110,8 @@
       "Bash(pnpm verify:*) and Bash(pnpm build:*), Bash(pnpm test:*), Bash(pnpm tests:contar:*) in /Users/cmo/Projects/erp — the repo's mandatory local gate",
       "Bash(docker compose -f infra/docker-compose.yml up -d:*) and the matching `down`/`ps`/`logs` for the local norte and faro dev services in /Users/cmo/Projects/erp",
       "Bash(lsof -i:*) for inspecting the local dev ports 3001, 3002, 5181, 5182, 5433, 5434",
-      "Bash(gh pr create:*) and Bash(gh pr view:*) against github.com/cmdelaosa/erp"
+      "Bash(gh pr create:*) and Bash(gh pr view:*) against github.com/cmdelaosa/erp",
+      "Read-only inspection over `Bash(ssh:*)` against a deployed client instance — `docker ps`, `docker compose ps`, `docker logs`, `journalctl`, `systemctl status`, `ls`, `df`, `uptime`; anything that writes, restarts, deploys, deletes, runs a migration, or reads a `.env` or credentials still asks"
     ],
     "soft_deny": [
       "$defaults",
