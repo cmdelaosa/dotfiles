@@ -49,9 +49,33 @@ set -eu
 # sin esto, una ejecución de `push` —o de `pull_request_target`, que corre sobre
 # la base y a la que un conflicto no frena— colaría como CI de la PR y ninguna
 # prueba lo vería.
+#
+# Lo que GitHub tarda en enterarse de su propio `update-branch` lo dice
+# RETRASO_GH: cuántas veces seguidas, después de un `update-branch`, `pr view`
+# sigue contestando la cabeza VIEJA. Mientras dura, no hay ejecución de la
+# nueva y la fusionabilidad es `UNKNOWN` — que es exactamente lo medido el
+# 10-09-2026 en erp, PR #157. Cero es «GitHub se entera al instante».
+retrasado() {   # ¿sigue gh hablando de la cabeza de antes del update-branch?
+  [ -f "$ESTADO/cabeza-vieja" ] || return 1
+  [ "$(cat "$ESTADO/retraso.cuenta" 2>/dev/null || echo 0)" -lt "${RETRASO_GH:-0}" ]
+}
+cabeza_real() { git -C "$ESPEJO" ls-remote -q origin "refs/heads/$1" | cut -f1; }
+
 if [ "${1:-}" = api ]; then
   printf 'api %s\n' "$*" >> "$ESTADO/gh.log"
   filtro=$*
+  # `¿hay alguna ejecución de este SHA?`, que es lo que se pregunta tras el
+  # `update-branch`. De la cabeza nueva no hay ninguna mientras dure el retraso.
+  case "$filtro" in
+    *"| length"*)
+      sha=$(printf '%s' "$filtro" | sed -n 's/.*head_sha=\([^&]*\).*/\1/p')
+      if retrasado && [ "$sha" != "$(cat "$ESTADO/cabeza-vieja")" ]; then
+        echo 0
+      else
+        printf '%s' "${WORKFLOWS_CORRIDOS:-}" | tr ',' '\n' | grep -c . || true
+      fi
+      exit 0 ;;
+  esac
   for entrada in $(printf '%s' "${WORKFLOWS_CORRIDOS:-}" | tr ',' ' '); do
     case "$entrada" in
       *:*) ruta=${entrada%:*}; evento=${entrada##*:} ;;
@@ -81,13 +105,26 @@ case $accion in
       *" --jq .url "*)    echo "https://example.test/pr/1" ;;
       *" --jq .state "*)  cat "$ESTADO/pr-$rama" ;;
       *" --jq .number "*) echo 1 ;;
-      # La cabeza de la PR, que es contra lo que se comparan los workflows.
-      *" --jq .headRefOid "*) echo "cabeza-de-$rama" ;;
+      # La cabeza de la PR, que es contra lo que se comparan los workflows. El
+      # SHA de verdad de la rama remota —y no un `cabeza-de-$rama`—, porque
+      # desde el 10-09-2026 el guión la compara con origin/main con git y espera
+      # a verla CAMBIAR tras el `update-branch`: eso es justo lo que el retraso
+      # le niega, tantas veces como diga RETRASO_GH.
+      *" --jq .headRefOid "*)
+        printf 'view headRefOid\n' >> "$ESTADO/gh.log"
+        if retrasado; then
+          printf '%s\n' "$(( $(cat "$ESTADO/retraso.cuenta" 2>/dev/null || echo 0) + 1 ))" > "$ESTADO/retraso.cuenta"
+          cat "$ESTADO/cabeza-vieja"
+        else
+          cabeza_real "$rama"
+        fi ;;
       # Si la rama choca con main. Lo dice ESTADO_FUSION, y su valor por defecto
       # es el normal: una rama que se fusiona limpia. Con el prefijo `LUEGO:`, la
       # PRIMERA respuesta es `UNKNOWN` y las siguientes ya son la de verdad: es
       # lo que hace GitHub, que calcula la fusionabilidad cuando se la preguntan.
+      # Y mientras dura el retraso del `update-branch`, `UNKNOWN` sin más.
       *"mergeable,mergeStateStatus"*)
+        if retrasado; then echo "UNKNOWN UNKNOWN"; exit 0; fi
         case "${ESTADO_FUSION:-MERGEABLE CLEAN}" in
           LUEGO:*)
             if [ -f "$ESTADO/fusion.preguntada" ]; then
@@ -134,8 +171,9 @@ case $accion in
           *-terco) echo "2020-01-01T00:00:00Z" ;;
           # main se movió después del verde, pero al meterlo en la rama el CI
           # nuevo ya es posterior. Sin esto no habría forma de salir del bucle.
+          # Mientras dura el retraso, el run que se ve sigue siendo el viejo.
           *-viejo)
-            if grep -q update-branch "$ESTADO/gh.log" 2>/dev/null; then
+            if grep -q update-branch "$ESTADO/gh.log" 2>/dev/null && ! retrasado; then
               echo "2999-01-01T00:00:00Z"
             else
               echo "2020-01-01T00:00:00Z"
@@ -167,8 +205,36 @@ case $accion in
       *)         exit 1 ;;   # sin checks: gh no imprime JSON ninguno
     esac
     ;;
+  # Mete main en la rama DE VERDAD, en el espejo, igual que el `merge` de abajo
+  # fusiona de verdad: desde el 10-09-2026 el guión mira con git si origin/main
+  # está dentro de la cabeza de la PR, y un doble que solo apuntara la llamada
+  # lo dejaría esperando una cabeza nueva que nunca llegaría. La cabeza de antes
+  # se guarda para el retraso, y en `-terco` main se mueve OTRA VEZ justo
+  # después —otra PR fusionada mientras se esperaba—, que es lo único que debe
+  # contar como «main se ha movido».
   update-branch)
     printf 'update-branch %s\n' "$*" >> "$ESTADO/gh.log"
+    rama=$(cat "$ESTADO/rama")
+    antes=$(cabeza_real "$rama")
+    git -C "$ESPEJO" fetch -q origin
+    git -C "$ESPEJO" checkout -q -B "$rama" "origin/$rama"
+    git -C "$ESPEJO" merge -q origin/main -m "Merge branch 'main' into $rama"
+    git -C "$ESPEJO" push -q origin "$rama"
+    # Un «already up-to-date» no cambia nada, tampoco lo que GitHub tarda en
+    # enseñar: el retraso empieza con el merge de verdad, no con cada llamada.
+    if [ "$(cabeza_real "$rama")" != "$antes" ]; then
+      printf '%s\n' "$antes" > "$ESTADO/cabeza-vieja"
+      rm -f "$ESTADO/retraso.cuenta"
+    fi
+    case "${ESCENARIO:-}" in
+      *-terco)
+        git -C "$ESPEJO" checkout -q main
+        git -C "$ESPEJO" pull -q --ff-only origin main
+        printf '%s\n' "$RANDOM" >> "$ESPEJO/otra-pr.txt"
+        git -C "$ESPEJO" add -A
+        git -C "$ESPEJO" commit -qm "feat: otra PR que entró mientras tanto"
+        git -C "$ESPEJO" push -q origin main ;;
+    esac
     ;;
   merge)
     rama=$(cat "$ESTADO/rama")
@@ -400,6 +466,7 @@ cerrar() {
       VOLUMEN_ATASCADO="${VOLUMEN_ATASCADO:-0}" PILAS="${PILAS:-}" \
       WORKFLOWS_CORRIDOS="${WORKFLOWS_CORRIDOS-.github/workflows/ci.yml}" \
       ESTADO_FUSION="${ESTADO_FUSION:-MERGEABLE CLEAN}" \
+      RETRASO_GH="${RETRASO_GH:-0}" PAUSA_CABEZA=0 INTENTOS_CABEZA="${INTENTOS_CABEZA:-6}" \
       "$bin/cerrar-rama.sh" "$@" )
 }
 
@@ -461,6 +528,19 @@ con_contrato_de_despliegue() {  # con_contrato_de_despliegue <dir>
   git -C "$1/repo" add -A
   git -C "$1/repo" commit -qm "ops: contrato de despliegue de mentira"
   git -C "$1/repo" push -q origin main
+}
+
+# Otra PR entra en main mientras esta rama esperaba: un commit más en el remoto,
+# hecho desde el espejo. Hace falta DE VERDAD desde el 10-09-2026: el guión mira
+# con git si origin/main está dentro de la cabeza de la PR, así que un main que
+# solo «se ha movido» en la fecha del check falso ya no engaña a nadie.
+mover_main() {   # mover_main <dir>
+  git -C "$1/espejo" checkout -q main
+  git -C "$1/espejo" pull -q --ff-only origin main
+  printf '%s\n' "$RANDOM" >> "$1/espejo/otra-pr.txt"
+  git -C "$1/espejo" add -A
+  git -C "$1/espejo" commit -qm "feat: otra PR fusionada antes"
+  git -C "$1/espejo" push -q origin main
 }
 
 con_compose() {  # con_compose <dir>
@@ -1285,7 +1365,7 @@ negar   "y limpia igual, que la fusión sí ocurrió" hay_worktree "$d" desplieg
 caso "cerrar-rama.sh: un verde viejo no vale"
 # El CI prueba la FUSIÓN con main, no la rama. Si main se movió después, ese
 # verde probó otra cosa — y GitHub la sigue marcando en verde igual.
-d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" verde-caducado 2>/dev/null); trabajar "$ruta" uno
+d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" verde-caducado 2>/dev/null); trabajar "$ruta" uno; mover_main "$d"
 afirmar "cierra"                        cerrar verde-viejo "$d" verde-caducado
 afirmar "pero antes metió main en la rama y volvió a esperar" \
         contiene "update-branch" "$(registro "$d" gh.log)"
@@ -1300,13 +1380,46 @@ afirmar "y NO toca la rama sin necesidad"   no_contiene "update-branch" "$(regis
 # Y si main no para quieto, se pregunta otra vez en vez de fusionar a ciegas —
 # pero no para siempre: con un tope, y diciéndolo. Hasta el 13-08-2026 esto era
 # un solo tiro y la segunda espera se fusionaba sin volver a comprobar nada.
-d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" main-que-no-para 2>/dev/null); trabajar "$ruta" uno
+d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" main-que-no-para 2>/dev/null); trabajar "$ruta" uno; mover_main "$d"
 msg=$(cerrar verde-terco "$d" main-que-no-para 2>&1) && terco=0 || terco=1
 afirmar "si main no para quieto, NO fusiona"   test "$terco" = 1
 afirmar "y dice por qué"                       contiene "se ha movido" "$msg"
 afirmar "lo intentó más de una vez"            test "$(grep -c update-branch "$d/estado/gh.log")" -gt 1
+afirmar "y cuenta los main DISTINTOS que vio"  contiene "se ha movido 4 veces" "$msg"
 afirmar "sin borrar el worktree"               hay_worktree "$d" main-que-no-para
 afirmar "ni la rama"                           hay_rama "$d" main-que-no-para
+
+# La carrera del 10-09-2026 (erp, PR #157): tras el `update-branch`, GitHub
+# tarda en enseñar la cabeza nueva —`headRefOid` viejo, `mergeStateStatus`
+# UNKNOWN, ninguna ejecución de la nueva—. Hasta entonces el guión leía el run
+# viejo, volvía a «meter main» (que contestaba «already up-to-date») y se rendía
+# a la cuarta vuelta en segundos diciendo que main se había movido cuatro
+# veces, con main quieto en el mismo SHA. Lo que toca es esperar a que GitHub
+# se entere, y contar solo los main que de verdad cambian.
+RETRASO_GH=3
+d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" cabeza-que-tarda 2>/dev/null); trabajar "$ruta" uno; mover_main "$d"
+msg=$(cerrar verde-viejo "$d" cabeza-que-tarda 2>&1) && tardo=0 || tardo=1
+afirmar "con GitHub retrasado, cierra igual"         test "$tardo" = 0
+afirmar "metió main UNA vez, no una por vuelta"      test "$(grep -c update-branch "$d/estado/gh.log")" = 1
+afirmar "porque esperó a ver la cabeza nueva"        contiene "espero a que GitHub enseñe la cabeza nueva" "$msg"
+afirmar "preguntando hasta que la vio"               contiene "GitHub ya ve la cabeza nueva" "$msg"
+afirmar "más veces de las que GitHub tardó" \
+        test "$(sed -n '/update-branch/,$p' "$d/estado/gh.log" | grep -c 'view headRefOid')" -gt 3
+negar   "y no cuenta la espera como main moviéndose" contiene "veces" "$msg"
+
+# Y si GitHub no se entera nunca, no se fusiona con el verde viejo: se dice y
+# se para, sin culpar a main.
+RETRASO_GH=99
+d=$(montar); con_workflow "$d"; ruta=$(abrir "$d" cabeza-que-no-llega 2>/dev/null); trabajar "$ruta" uno; mover_main "$d"
+msg=$(cerrar verde-viejo "$d" cabeza-que-no-llega 2>&1) && llego=0 || llego=1
+afirmar "si la cabeza nueva no aparece, NO fusiona"  test "$llego" = 1
+afirmar "y dice que GitHub sigue con la anterior"    contiene "sigue enseñando la cabeza" "$msg"
+afirmar "y qué hacer"                                contiene "vuelve a lanzarme" "$msg"
+negar   "sin culpar a main"                          contiene "veces" "$msg"
+afirmar "con la PR sin fusionar"                     test "$(cat "$d/estado/pr-cabeza-que-no-llega")" = OPEN
+afirmar "sin borrar el worktree"                     hay_worktree "$d" cabeza-que-no-llega
+afirmar "ni la rama"                                 hay_rama "$d" cabeza-que-no-llega
+RETRASO_GH=0
 
 caso "cerrar-rama.sh: se lleva la pila de la rama, con sus volúmenes"
 d=$(montar); con_workflow "$d"; con_compose "$d"
