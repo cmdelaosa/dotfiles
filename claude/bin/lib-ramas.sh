@@ -451,12 +451,48 @@ hay_algo_que_empujar() {
     morir "La rama '$rama' no tiene ningún commit que origin/$principal no tenga."
 }
 
+# El push. Si `origin/<rama>` es antepasada de la rama, es un fast-forward y va
+# como siempre. Si no, la rama se ha reescrito, y hay que saber por quién:
+#
+# - Si el SHA que hay en origin ha sido alguna vez la cabeza de ESTA rama —está
+#   en su reflog—, lo remoto es lo que este checkout empujó y lo local es su
+#   reescritura: un rebase sobre main, un amend. Se fuerza **con candado sobre
+#   ese SHA**, para que un push de otro sitio entre medias no se pise.
+# - Si no ha sido nunca cabeza de aquí, lo empujó otra sesión, y no se pisa.
+#
+# Pasó el 10-09-2026 en erp, PR #163: la PR chocaba con main, `--esperar-ci`
+# mandó rebasar —el consejo es de este mismo fichero—, y el `--sin-ci`
+# siguiente moría en el push con un «non-fast-forward» después de haber pagado
+# el `verificar.sh` entero. Un rebase que el guión aconseja tiene que poder
+# empujarse desde el guión.
+empujar_rama() {
+  local remota
+  remota=$(git -C "$raiz" rev-parse --quiet --verify "refs/remotes/origin/$rama" || true)
+  if [ -z "$remota" ] || git -C "$raiz" merge-base --is-ancestor "$remota" "$rama"; then
+    git -C "$raiz" push --quiet -u origin "$rama"
+    return
+  fi
+  # En una variable y no con `| grep -q`: con `pipefail`, `grep -q` cierra la
+  # tubería al primer acierto, git muere de SIGPIPE y el acierto cuenta como no.
+  local cabezas
+  cabezas=$(git -C "$raiz" reflog show --format=%H "$rama" 2>/dev/null || true)
+  if printf '%s\n' "$cabezas" | grep -Fx "$remota" >/dev/null; then
+    paso "la rama se reescribió aquí (rebase o amend): la fuerzo con candado sobre ${remota:0:7}"
+    git -C "$raiz" push --quiet -u --force-with-lease="$rama:$remota" origin "$rama"
+  else
+    morir "origin/$rama tiene commits que esta rama no ha tenido nunca (${remota:0:7})." \
+          "Los empujó otra sesión, y no se pisan. Tráelos y vuelve a lanzarlo:" \
+          "" \
+          "    git -C ${ruta_wt:-$raiz} pull --rebase origin $rama"
+  fi
+}
+
 # Empuja y deja `numero` y `estado` puestos. Abre la PR si no la había.
 empujar_y_abrir_pr() {
   hay_algo_que_empujar
 
   paso "empujo $rama ($pendientes commit(s))"
-  git -C "$raiz" push --quiet -u origin "$rama"
+  empujar_rama
 
   if $GH pr view "$rama" --json number >/dev/null 2>&1; then
     estado=$($GH pr view "$rama" --json state --jq .state)
