@@ -20,6 +20,16 @@ dice algo que no cuadra con el paso en el que crees estar. Vive aquí y no en el
 - **«verificar.sh ha fallado»** → no ha empujado nada. Arréglalo en el worktree,
   commitea, **vuelve a revisar y a marcar** (la marca ha caducado con ese commit)
   y relánzalo.
+- **«tiene commits que esta rama no ha tenido nunca»** → la remota lleva algo
+  que no salió de aquí: otra sesión, o el `update-branch` que hace el propio
+  `--esperar-ci` cuando la PR se queda atrás de `main`. No se pisa. Haz el
+  `pull --rebase` que trae escrito, **vuelve a revisar y a marcar** y relanza.
+  Una rama rebasada o con un amend NO cae aquí: esa la empuja él solo, con
+  candado, y lo dice («la fuerzo con candado sobre …»).
+- **«La rama está detrás de origin/…»** → en local hay MENOS que en la remota,
+  casi siempre un `reset --hard` de más. No ha empujado nada: no es un rebase,
+  es haber perdido commits. Mira el `log` que trae escrito y recupéralos del
+  reflog antes de nada.
 - **«Estos commits no han pasado por el revisor»** → te has saltado el paso 2, o
   has commiteado después de marcar. Revisa y `marcar-revisado.sh … --nivel …`.
 - **«pide una revisión a 'max'» / «La marca dice low»** → el diff es de un tramo

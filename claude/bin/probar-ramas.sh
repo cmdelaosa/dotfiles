@@ -1828,12 +1828,7 @@ ruta=$(abrir "$d" rebasada 2>/dev/null); trabajar "$ruta" uno
 revisar "$d" rebasada >/dev/null 2>&1
 probar_rama verde "$d" rebasada --sin-ci >/dev/null 2>&1
 # Otra PR entra en main mientras tanto, y la rama se rebasa sobre ella.
-git -C "$d/espejo" checkout -q main
-git -C "$d/espejo" pull -q --ff-only origin main
-printf 'otra\n' > "$d/espejo/otra-pr.txt"
-git -C "$d/espejo" add -A
-git -C "$d/espejo" commit -qm "feat: otra PR que entró mientras tanto"
-git -C "$d/espejo" push -q origin main
+mover_main "$d"
 git -C "$ruta" fetch -q origin
 git -C "$ruta" rebase -q origin/main
 revisar "$d" rebasada >/dev/null 2>&1
@@ -1865,6 +1860,23 @@ afirmar "con commits ajenos en la remota, se para"   test "$pisado" = 1
 afirmar "y dice que los empujó otra sesión"          contiene "otra sesión" "$msg"
 afirmar "y la remota conserva el commit ajeno" \
         test "$(git -C "$d/repo" ls-remote -q origin refs/heads/pisada | cut -f1)" = "$ajeno"
+
+# Y una rama que se ha quedado DETRÁS de lo que empujó —un `reset --hard` de
+# más— no es un rebase: el SHA remoto sigue en su reflog, así que el candado
+# solo lo pararía si mirase que hay algo nuevo que empujar. Forzar ahí borra
+# commits de la PR sin que nadie lo haya pedido.
+d=$(montar); con_workflow "$d"
+ruta=$(abrir "$d" detras 2>/dev/null); trabajar "$ruta" uno; trabajar "$ruta" dos
+revisar "$d" detras >/dev/null 2>&1
+probar_rama verde "$d" detras --sin-ci >/dev/null 2>&1
+empujado=$(git -C "$ruta" rev-parse HEAD)
+git -C "$ruta" reset -q --hard HEAD~1
+revisar "$d" detras >/dev/null 2>&1
+msg=$(probar_rama verde "$d" detras --sin-ci 2>&1) && retrocedida=0 || retrocedida=1
+afirmar "con la rama detrás de la remota, se para"   test "$retrocedida" = 1
+afirmar "y dice que ha perdido commits"              contiene "perdido commits" "$msg"
+afirmar "y la remota conserva lo empujado" \
+        test "$(git -C "$d/repo" ls-remote -q origin refs/heads/detras | cut -f1)" = "$empujado"
 
 caso "probar-rama.sh: el freno de las rondas contra un rojo que no se va"
 # Vivía en la cabeza del modelo —«apunta los nombres de cada ronda y compáralos

@@ -472,19 +472,32 @@ empujar_rama() {
     git -C "$raiz" push --quiet -u origin "$rama"
     return
   fi
-  # En una variable y no con `| grep -q`: con `pipefail`, `grep -q` cierra la
-  # tubería al primer acierto, git muere de SIGPIPE y el acierto cuenta como no.
-  local cabezas
-  cabezas=$(git -C "$raiz" reflog show --format=%H "$rama" 2>/dev/null || true)
-  if printf '%s\n' "$cabezas" | grep -Fx "$remota" >/dev/null; then
-    paso "la rama se reescribió aquí (rebase o amend): la fuerzo con candado sobre ${remota:0:7}"
-    git -C "$raiz" push --quiet -u --force-with-lease="$rama:$remota" origin "$rama"
-  else
-    morir "origin/$rama tiene commits que esta rama no ha tenido nunca (${remota:0:7})." \
-          "Los empujó otra sesión, y no se pisan. Tráelos y vuelve a lanzarlo:" \
-          "" \
-          "    git -C ${ruta_wt:-$raiz} pull --rebase origin $rama"
-  fi
+  # El `--` porque una rama que se llame como un fichero de la raíz —`docs`,
+  # `infra`— es «ambigua» para git y el reflog saldría vacío.
+  case "$(git -C "$raiz" reflog show --format=%H "$rama" -- 2>/dev/null)" in
+    *"$remota"*)
+      # Una reescritura deja algo nuevo que empujar. Si no hay nada —la rama
+      # local se ha quedado DETRÁS de lo que ya empujó: un `reset --hard` de
+      # más—, forzar sería borrar commits de la PR sin que nadie lo pida.
+      [ "$(git -C "$raiz" rev-list --count "$remota..$rama")" -gt 0 ] ||
+        morir "La rama está detrás de origin/$rama: aquí no hay nada que origin no tenga." \
+              "Eso no es un rebase, es haber perdido commits —¿un reset de más?—, y no" \
+              "se empuja. Míralo:" \
+              "" \
+              "    git -C ${ruta_wt:-$raiz} log --oneline $rama..origin/$rama"
+      paso "la rama se reescribió aquí (rebase o amend): la fuerzo con candado sobre ${remota:0:7}"
+      git -C "$raiz" push --quiet -u --force-with-lease="$rama:$remota" origin "$rama" ;;
+    *)
+      # O lo empujó otra sesión, o fue el propio `--esperar-ci`: su
+      # `update-branch` mete main en la rama EN GITHUB, y ese merge no ha pasado
+      # nunca por aquí. Traerlo con `pull --rebase` deja lo local encima, y
+      # reescribe los SHA, así que la marca de revisión caduca.
+      morir "origin/$rama tiene commits que esta rama no ha tenido nunca (${remota:0:7}):" \
+            "los empujó otra sesión, o el update-branch de --esperar-ci. No se pisan." \
+            "Tráelos, vuelve a revisar y a marcar, y relánzalo:" \
+            "" \
+            "    git -C ${ruta_wt:-$raiz} pull --rebase origin $rama" ;;
+  esac
 }
 
 # Empuja y deja `numero` y `estado` puestos. Abre la PR si no la había.
@@ -661,7 +674,9 @@ explicar_checks_ausentes() {
         "" \
         "    git -C ${ruta_wt:-$raiz} fetch origin" \
         "    git -C ${ruta_wt:-$raiz} rebase origin/$principal" \
-        "    git -C ${ruta_wt:-$raiz} push --force-with-lease" ;;
+        "" \
+        "y relanza \`probar-rama.sh $rama --sin-ci\` tras volver a revisar y marcar:" \
+        "el push de la rama rebasada lo hace él, con candado." ;;
     *UNKNOWN*)
       aviso "" \
         "GitHub no dice si la rama choca con $principal —lo calcula cuando se lo" \
