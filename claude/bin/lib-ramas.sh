@@ -573,7 +573,7 @@ workflows_que_faltan() {
   esperados=$(workflows_esperados "${ruta_wt:-$raiz}")
   [ -n "$esperados" ] || return 0
 
-  sha=$($GH pr view "$rama" --json headRefOid --jq .headRefOid 2>/dev/null) || return 1
+  sha=$(cabeza_de_pr)
   [ -n "$sha" ] || return 1
 
   # Se compara por RUTA del fichero, no por nombre del check. El nombre que sale
@@ -954,6 +954,10 @@ asegurar_ci_fresco() {
   git -C "$raiz" fetch origin --quiet
   main_sha=$(git -C "$raiz" rev-parse --verify --quiet "origin/$principal" 2>/dev/null || true)
   cabeza=$(cabeza_de_pr)
+  # Si `gh` no contesta, la cabeza de antes del `update-branch` es la que acaba
+  # de traer el `fetch`: sin ella, «una cabeza distinta de la anterior» sería
+  # cualquiera, también la vieja que GitHub sigue enseñando.
+  [ -n "$cabeza" ] || cabeza=$(git -C "$raiz" rev-parse --verify --quiet "origin/$rama" 2>/dev/null || true)
 
   # Si main ya está dentro de la cabeza de la PR, el CI de esa cabeza probó
   # exactamente este main: fresco, y sin mirar ninguna fecha. Es lo que cierra
