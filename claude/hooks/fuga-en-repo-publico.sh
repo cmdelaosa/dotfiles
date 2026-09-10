@@ -122,8 +122,38 @@ ghp_[A-Za-z0-9]{20,}
 github_pat_[A-Za-z0-9_]{20,}
 AKIA[0-9A-Z]{16}
 xox[abprs]-[A-Za-z0-9-]{10,}
-sk-(ant-)?[A-Za-z0-9_-]{20,}
-(password|passwd|secret|token|api[_-]?key|apikey)["'\'' ]*[:=][:=]?["'\'' ]*[A-Za-z0-9/+=_-]{16,}'
+sk-(ant-)?[A-Za-z0-9_-]{20,}'
+
+# ── Listón 1b: «palabra clave = valor opaco», SIN mirar mayúsculas ──────────
+# *(10-09-2026)* Esta línea vivía arriba y se quedaba corta por una razón
+# tonta: el `grep -E` de abajo no lleva `-i`, y **las variables de entorno se
+# escriben en MAYÚSCULAS**. O sea que cazaba `password: …` y no veía
+# `PASSWORD=…`, que es la forma en que esto aparece de verdad — en un `.env`,
+# en un compose, en una unidad de systemd, en un YAML de CI.
+#
+#     password: <16 o más caracteres opacos>   → la veía
+#     PASSWORD=<los mismos 16 o más>           → NO la veía
+#
+# (El ejemplo va con corchetes angulares y no con un valor de mentira a
+# propósito: escrito literal, este comentario disparaba este mismo hook. Que
+# es la demostración de que funciona, y de que no sabe distinguir un ejemplo
+# documentado de una credencial — ni tiene por qué.)
+#
+# Va aparte y no se le pone `-i` al bucle entero porque **las de arriba se
+# estropean con `-i`**: `AKIA[0-9A-Z]{16}` en minúsculas no es una clave de
+# AWS, y `sk-` casaría con cualquier `SK-`. Un patrón preciso que se vuelve
+# impreciso deja de valer para lo que se escribió.
+#
+# ⚠️ **Y no lleva las palabras españolas**, aunque estos repositorios estén
+# escritos en español y la tentación sea obvia. Medido el 10-09 contra el
+# contenido de los dos repos: con `clave|contraseña|frase|secreto` dentro
+# salen **28 coincidencias en `erp` y ninguna es una credencial** — quince
+# `totpSecreto: "JBSWY3DPEHPK3PXP"` de tests, y código corriente como
+# `const clave = base32Descodificar(secreto)`, porque un nombre de función
+# de 18 letras cabe entero en «valor opaco». Con solo `-i` y las inglesas,
+# las coincidencias nuevas en los dos repos son CERO. Un candado que marca
+# el código normal se acaba apagando, y entonces no protege nada.
+CREDENCIALES_SIN_CAJA='(password|passwd|secret|token|api[_-]?key|apikey)["'\'' ]*[:=][:=]?["'\'' ]*[A-Za-z0-9/+=_-]{16,}'
 
 # ── Listón 2: contexto de la máquina. Solo si el repositorio es público ─────
 # Medido contra el contenido ya commiteado de dotfiles: cero coincidencias en
@@ -247,6 +277,15 @@ while IFS= read -r f; do
     [ -n "$linea" ] && apuntar "$f" "parece una credencial" "$linea"
   done <<PATRONES
 $CREDENCIALES
+PATRONES
+
+  # El mismo bucle, con `-i`. Ver por qué son dos listas allá arriba.
+  while IFS= read -r patron; do
+    [ -z "$patron" ] && continue
+    linea=$(printf '%s\n' "$anadidas" | grep -E -i -m1 -e "$patron" 2>/dev/null)
+    [ -n "$linea" ] && apuntar "$f" "parece una credencial" "$linea"
+  done <<PATRONES
+$CREDENCIALES_SIN_CAJA
 PATRONES
 
   [ "$publico" = si ] || continue
