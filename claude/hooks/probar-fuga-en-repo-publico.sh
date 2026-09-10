@@ -71,6 +71,19 @@ probar privado BLOQUEA "token de GitHub (privado)" c.txt 'token: github_pat_11AB
 probar publico BLOQUEA "clave de AWS"           c.txt 'AKIAIOSFODNN7EXAMPLE'
 probar publico BLOQUEA "identidad de age"       c.txt 'AGE-SECRET-KEY-1QQPQZRFQ7X8VJ4KLM9NPZ2WXYT'
 probar publico BLOQUEA "contraseña con valor de verdad" c.txt 'password: "s3cr3t0LargoDeVerdad123"'
+# En MAYÚSCULAS, que es como se escriben las variables de entorno de verdad —
+# y era el caso que se escapaba entero hasta el 10-09-2026.
+#
+# ⚠️ **Añadir un caso de credencial aquí dispara el hook sobre ESTE fichero**,
+# y es correcto: no sabe distinguir un fixture de un secreto, ni debe. Mira lo
+# que has escrito, comprueba que es de mentira, y pasa con `CLAUDE_ALLOW_FUGA=1`
+# — que es justo lo que esa escotilla existe para cubrir.
+probar publico BLOQUEA "PASSWORD en un .env"    e.sh 'PASSWORD=abcdefghijklmnop1234'
+probar publico BLOQUEA "API_KEY en un compose"  c.yml '      API_KEY: aBcDeF0123456789xyz'
+probar publico BLOQUEA "SECRET en una unidad"   u.service 'Environment=SECRET=abcdefghijklmnop1234'
+# Y las de formato exacto NO se aflojan con las mayúsculas: son dos listas
+# aparte justo para esto. Una `akia…` en minúsculas no es una clave de AWS.
+probar publico PASA    "un akia en minúsculas"  c.txt 'akiaiosfodnn7example'
 probar publico BLOQUEA "fichero .env"           .env 'FOO=bar'
 probar publico BLOQUEA "fichero .env.local"     .env.local 'DB_HOST=db.interno'
 probar privado BLOQUEA "fichero .pem"           id.pem 'lo que sea'
@@ -80,6 +93,23 @@ echo "--- ...pero lo que se escribe BIEN no se marca ---"
 # credencial que no está en el repositorio.
 probar publico PASA "token por variable"        c.sh 'TOKEN=$GITHUB_TOKEN'
 probar publico PASA "contraseña por variable"   c.sh 'password: ${PGPASSWORD}'
+# Los dos de arriba, en MAYÚSCULAS: al hacer el patrón insensible a la caja,
+# el falso positivo que lo apagaría todo también se duplica. Sigue sin marcar
+# porque `$` y `{` no caben en «valor opaco», que es lo que lo sujeta.
+probar publico PASA "PASSWORD por variable"     c.sh 'PASSWORD=$PGPASSWORD'
+probar publico PASA "API_KEY por variable"      c.yml '      API_KEY: ${OPENAI_API_KEY}'
+# Y el código corriente en español, que es por lo que `clave` NO está en la
+# lista: `const clave = base32Descodificar(secreto)` es exactamente la forma
+# que tendría una credencial si se metieran las palabras españolas.
+probar publico PASA "código con «clave»"        t.ts 'const clave = base32Descodificar(secreto);'
+probar publico PASA "un secreto TOTP de test"   t.ts 'totpSecreto: "JBSWY3DPEHPK3PXP",'
+# ⚠️ **Y éste es el precio de esa decisión, escrito para que se vea.** Es la
+# frase con la que se cifran las copias de una instancia de `erp` — un secreto
+# de los buenos— y PASA, porque `frase` no está en la lista. No es un
+# descuido: meter las palabras españolas costaba 28 falsos positivos medidos.
+# Lo que sí lo caza es el nombre del fichero, porque esto vive en un `.env`.
+probar publico PASA "COPIA_FRASE, y pasa a propósito" \
+       c.sh 'COPIA_FRASE=Xk9wQ2vRt7YpLm3nBs5HjD8fGc1AzE4uNi6oPr0TyWqVbXk9wQ2v'
 probar publico PASA "un .env.example"           .env.example 'FOO=pon-aqui-lo-tuyo'
 probar publico PASA "un .env.dist"              .env.dist 'FOO=pon-aqui-lo-tuyo'
 # Las otras dos inglesas, que estaban en la lista y no las miraba nadie: la
