@@ -111,7 +111,8 @@
       "Bash(docker compose -f infra/docker-compose.yml up -d:*) and the matching `down`/`ps`/`logs` for the local norte and faro dev services in /Users/cmo/Projects/erp",
       "Bash(lsof -i:*) for inspecting the local dev ports 3001, 3002, 5181, 5182, 5433, 5434",
       "Bash(gh pr create:*) and Bash(gh pr view:*) against github.com/cmdelaosa/erp",
-      "Read-only inspection over `Bash(ssh:*)` against a deployed client instance — `docker ps`, `docker compose ps`, `docker logs`, `journalctl`, `systemctl status`, `ls`, `df`, `uptime`; anything that writes, restarts, deploys, deletes, runs a migration, or reads a `.env` or credentials still asks"
+      "Read-only inspection over `Bash(ssh:*)` against a deployed client instance — `docker ps`, `docker compose ps`, `docker logs`, `journalctl`, `systemctl status`, `ls`, `df`, `uptime`; anything that writes, restarts, deploys, deletes, runs a migration, or reads a `.env` or credentials still asks",
+      "Read-only SQL over `Bash(ssh:*)` against a deployed client instance — `docker compose exec db psql` running only SELECT statements that read tables. Still asks: INSERT/UPDATE/DELETE/DROP/ALTER/TRUNCATE, `SELECT … INTO`, `COPY` or `\\copy` in either direction, side-effecting or file-reading functions (`pg_terminate_backend`, `pg_cancel_backend`, `pg_reload_conf`, `pg_sleep`, `lo_export`, `pg_read_file`, `dblink`), and any SELECT of `hash` or `totp_secreto` from `usuarios` — those are credentials"
     ],
     "soft_deny": [
       "$defaults",
