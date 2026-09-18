@@ -403,6 +403,28 @@ montar() {
   ( cd "$d" && pwd -P | tr -d '\n' )
 }
 
+# Un repositorio SIN remoto, que es lo único que no se puede sacar del molde:
+# el molde nace con `origin`. No hay `abrir-rama.sh` que valga —necesita
+# origin/main—, así que la rama se hace a mano, que es justo lo que hay en un
+# repositorio local de verdad que todavía no se ha publicado en ningún sitio.
+montar_sin_remoto() { # montar_sin_remoto <rama>
+  local d
+  d=$(mktemp -d "$TMP/pelado.XXXXXX")
+  git init -q -b main "$d/repo"
+  git -C "$d/repo" config user.email t@t
+  git -C "$d/repo" config user.name t
+  printf 'uno\n' > "$d/repo/f"
+  git -C "$d/repo" add -A
+  git -C "$d/repo" commit -qm inicial
+  git -C "$d/repo" branch "$1"
+  git -C "$d/repo" switch -q "$1"
+  printf 'dos\n' >> "$d/repo/f"
+  git -C "$d/repo" add -A
+  git -C "$d/repo" commit -qm "fix: dos"
+  git -C "$d/repo" switch -q main
+  ( cd "$d" && pwd -P | tr -d '\n' )
+}
+
 # Commit de mentira en la rama, para que haya algo que fusionar.
 trabajar() { # trabajar <ruta-del-worktree> <texto>
   # ⚠️ La ruta se comprueba antes de tocar nada. `abrir` imprime la ruta del
@@ -1662,6 +1684,18 @@ git -C "$d/repo" push -q origin main
 ruta=$(abrir "$d" tramo-configurado 2>/dev/null); retocar "$ruta" dos
 afirmar "la lista del repositorio manda" \
         contiene "sensible max" "$(clasificar "$d" tramo-configurado 2>/dev/null)"
+
+caso "un repositorio sin remoto contesta, no se muere en silencio"
+# `resolver_repo` acababa en `git remote get-url origin && hubo_remoto=1`. Con
+# `set -Eeuo pipefail`, una función cuya última orden falla devuelve 1 y aborta
+# el guión entero antes de llegar a ningún `morir`: exit 2 y NI UNA LÍNEA. La
+# cadena entera —clasificar, probar, cerrar— moría así en cualquier repositorio
+# local sin publicar *(18-09-2026, dash-parallel)*.
+d=$(montar_sin_remoto sin-remoto)
+salida=$(clasificar "$d" sin-remoto 2>&1); rc_pelado=$?
+afirmar "sin remoto, clasificar-diff.sh sale bien"  test "$rc_pelado" = 0
+afirmar "y dice el tramo en vez de callarse"        contiene "trivial low" "$salida"
+negar   "y no sale mudo"                            test -z "$salida"
 
 caso "la marca de revisión tiene que llegar al nivel que pide el diff"
 # El freno que convierte la escalera en algo más que una sugerencia. Sin él, el
