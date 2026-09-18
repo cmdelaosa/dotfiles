@@ -15,12 +15,17 @@ Autor y committer, siempre: `cmdelaosa <cmdelaosa@gmail.com>`.
 que poner las cuatro:
 
 ```bash
-export GIT_AUTHOR_NAME=cmdelaosa
-export GIT_AUTHOR_EMAIL=cmdelaosa@gmail.com
-export GIT_COMMITTER_NAME=cmdelaosa
-export GIT_COMMITTER_EMAIL=cmdelaosa@gmail.com
-git config commit.gpgsign false
+git config commit.gpgsign false   # una vez por repositorio, esto sí persiste
+
+GIT_AUTHOR_NAME=cmdelaosa GIT_AUTHOR_EMAIL=cmdelaosa@gmail.com \
+GIT_COMMITTER_NAME=cmdelaosa GIT_COMMITTER_EMAIL=cmdelaosa@gmail.com \
+git commit -m "..."
 ```
+
+**Las cuatro variables van delante de cada commit, una por una.** No vale
+exportarlas al principio: en una sesión de agente el estado del shell no
+persiste entre órdenes, así que el `export` se pierde por el camino y el commit
+siguiente vuelve a salir como Claude.
 
 La firma se apaga porque el contenedor trae una clave que no es suya y GitHub
 marcaría «Unverified».
@@ -32,7 +37,14 @@ git log -1 --format='%an <%ae>'
 ```
 
 Esto no es ceremonia. **El caso malo no da error**: sale un commit perfecto con
-el autor equivocado, y se descubre cuando ya está empujado.
+el autor equivocado, y se descubre cuando ya está empujado. Si salió mal, se
+arregla en el sitio, con las cuatro variables delante:
+
+```bash
+GIT_AUTHOR_NAME=cmdelaosa GIT_AUTHOR_EMAIL=cmdelaosa@gmail.com \
+GIT_COMMITTER_NAME=cmdelaosa GIT_COMMITTER_EMAIL=cmdelaosa@gmail.com \
+git commit --amend --no-edit --reset-author
+```
 
 ## El mensaje
 

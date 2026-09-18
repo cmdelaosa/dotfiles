@@ -124,6 +124,23 @@ if [ "$modos" -eq 0 ]; then
   fallos=$((fallos + 1))
 fi
 
+# ── Los JSON ────────────────────────────────────────────────────────────────
+# Una coma de más en `claude/settings.json` no la ve nadie hasta que Claude Code
+# arranca y se encuentra sin modelo, sin estilo de salida y **sin los cuatro
+# hooks** — que es justo el momento en que menos se mira un JSON. Aquí cuesta
+# milisegundos, y desde el 18-09-2026 hay dos ficheros que vigilar en vez de uno.
+titulo "los JSON, que se leen al arrancar y no avisan"
+for j in claude/settings.json .claude/settings.json; do
+  if [ ! -f "$repo/$j" ]; then
+    printf '  ----    %s no existe\n' "$j"
+  elif salida=$(jq -e . "$repo/$j" 2>&1 >/dev/null); then
+    printf '  ok      %s\n' "$j"
+  else
+    printf '  FALLO   %s: %s\n' "$j" "$salida"
+    fallos=$((fallos + 1))
+  fi
+done
+
 # ── El presupuesto de las instrucciones ─────────────────────────────────────
 # *(17-08-2026)* El CLAUDE.md global se carga entero en CADA sesión de CADA
 # proyecto, así que cada línea se paga siempre. Llegó a 19,5 KB —unos 5.000
