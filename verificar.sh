@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Todo lo que se puede juzgar de un cambio de este repositorio sin salir de la
-# máquina: la sintaxis de cada guión y las cinco matrices de pruebas.
+# máquina: la sintaxis de cada guión, que los dos `settings.json` sean JSON, y
+# las cinco matrices de pruebas.
 #
 # Lo lanza `probar-rama.sh` antes de empujar, así que aquí va lo RÁPIDO. Si algo
 # tarda minutos, su sitio es el CI: un freno que cuesta cinco minutos cada vez
@@ -129,17 +130,34 @@ fi
 # arranca y se encuentra sin modelo, sin estilo de salida y **sin los cuatro
 # hooks** — que es justo el momento en que menos se mira un JSON. Aquí cuesta
 # milisegundos, y desde el 18-09-2026 hay dos ficheros que vigilar en vez de uno.
+#
+# `claude/settings.json` va con `obligatorio`: es el que instala el modelo, el
+# estilo y los cuatro hooks, así que si desaparece o alguien lo renombra eso no
+# es «no aplica», es el fallo. Lo mismo que hace `presupuesto()` unas líneas más
+# abajo, y lo mismo que dicen los dos ceros de más arriba: un chequeo que no
+# encuentra su fichero no ha mirado nada, y eso no se pinta en gris.
 titulo "los JSON, que se leen al arrancar y no avisan"
-for j in claude/settings.json .claude/settings.json; do
+json_valido() {                         # json_valido <ruta-relativa> <obligatorio|opcional>
+  local j="$1" salida
   if [ ! -f "$repo/$j" ]; then
-    printf '  ----    %s no existe\n' "$j"
+    if [ "$2" = obligatorio ]; then
+      printf '  FALLO   %s no existe, y de él salen el modelo, el estilo y los hooks\n' "$j"
+      fallos=$((fallos + 1))
+    else
+      printf '  ----    %s no existe\n' "$j"
+    fi
   elif salida=$(jq -e . "$repo/$j" 2>&1 >/dev/null); then
     printf '  ok      %s\n' "$j"
   else
-    printf '  FALLO   %s: %s\n' "$j" "$salida"
+    # `${salida:-…}` porque un fichero VACÍO hace que `jq -e` salga con 4 y no
+    # escriba nada: sin esto la línea quedaba «FALLO <fichero>: » a secas, roja
+    # pero muda.
+    printf '  FALLO   %s: %s\n' "$j" "${salida:-no es JSON válido (¿fichero vacío?)}"
     fallos=$((fallos + 1))
   fi
-done
+}
+json_valido claude/settings.json  obligatorio
+json_valido .claude/settings.json obligatorio
 
 # ── El presupuesto de las instrucciones ─────────────────────────────────────
 # *(17-08-2026)* El CLAUDE.md global se carga entero en CADA sesión de CADA
