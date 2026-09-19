@@ -51,8 +51,14 @@ resolver_repo() {                       # resolver_repo <rama-o-vacío> <verbo>
     $1 == "worktree" { w = substr($0, 10) }
     $1 == "branch" && $2 == r { print w; exit }')
 
-  hubo_remoto=0
-  git -C "$raiz" remote get-url origin >/dev/null 2>&1 && hubo_remoto=1
+  # Un `if` y no `&& hubo_remoto=1`: con `set -e`, una función cuya última orden
+  # falla devuelve 1, y eso abortaba el guión entero antes de llegar a ningún
+  # `morir`. Un repositorio sin remoto mataba la cadena con un exit 2 mudo.
+  if git -C "$raiz" remote get-url origin >/dev/null 2>&1; then
+    hubo_remoto=1
+  else
+    hubo_remoto=0
+  fi
 }
 
 # Borrar el directorio desde el que se está ejecutando deja el shell en un sitio
